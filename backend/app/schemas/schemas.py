@@ -149,6 +149,12 @@ class BillCreate(BaseModel):
     upload_id: Optional[int] = None
     image_path: Optional[str] = None
 
+class BillUpdate(BaseModel):
+    customer_id: Optional[int] = None
+    bill_date: Optional[str] = None
+    items: Optional[List[BillItemCreate]] = None
+    payment_method: Optional[str] = None
+
 class BillPaymentUpdate(BaseModel):
     installment_amount: float   # The NEW amount being paid in this installment
     payment_method: Optional[str] = "Cash"
