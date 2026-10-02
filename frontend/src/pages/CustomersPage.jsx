@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, MagnifyingGlass, PencilSimple, ToggleLeft, ToggleRight } from "@phosphor-icons/react";
+import { Plus, MagnifyingGlass, PencilSimple, ToggleLeft, ToggleRight, Trash, Warning } from "@phosphor-icons/react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import api from "../lib/api";
@@ -64,9 +64,49 @@ function CustomerModal({ onClose, existing }) {
   );
 }
 
+function DeleteConfirmModal({ customer, onConfirm, onCancel, isPending }) {
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="card w-full max-w-sm animate-slide-in">
+        <div className="p-6 flex flex-col items-center text-center gap-4">
+          <div className="w-14 h-14 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
+            <Warning size={28} className="text-rose-400" weight="fill" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-zinc-100">Delete Customer?</h3>
+            <p className="text-sm text-zinc-400 mt-1">
+              Are you sure you want to permanently delete{" "}
+              <span className="font-semibold text-zinc-200">{customer.name}</span>?
+              <br />
+              <span className="text-rose-400/80 text-xs mt-1 block">This action cannot be undone.</span>
+            </p>
+          </div>
+          <div className="flex gap-3 w-full mt-1">
+            <button
+              onClick={onCancel}
+              className="btn-sm btn-secondary flex-1"
+              disabled={isPending}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={isPending}
+              className="flex-1 px-4 py-2 rounded-lg text-sm font-medium bg-rose-600 hover:bg-rose-500 text-white transition-colors disabled:opacity-50"
+            >
+              {isPending ? "Deleting…" : "Delete"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CustomersPage() {
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState(null); // null | "add" | customer obj
+  const [deleteTarget, setDeleteTarget] = useState(null); // customer to delete
   const qc = useQueryClient();
 
   const { data = [], isLoading } = useQuery({
@@ -77,6 +117,16 @@ export default function CustomersPage() {
   const toggleActive = useMutation({
     mutationFn: (c) => api.put(`/customers/${c.id}`, { ...c, is_active: !c.is_active }),
     onSuccess: () => { qc.invalidateQueries(["customers"]); toast.success("Updated"); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => api.delete(`/customers/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries(["customers"]);
+      toast.success("Customer deleted");
+      setDeleteTarget(null);
+    },
+    onError: (e) => toast.error(e.response?.data?.detail || "Failed to delete customer"),
   });
 
   return (
@@ -132,13 +182,20 @@ export default function CustomersPage() {
                       </td>
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button onClick={() => setModal(c)} className="btn-ghost btn-sm !px-2">
+                          <button onClick={() => setModal(c)} className="btn-ghost btn-sm !px-2" title="Edit">
                             <PencilSimple size={15} />
                           </button>
-                          <button onClick={() => toggleActive.mutate(c)} className="btn-ghost btn-sm !px-2">
+                          <button onClick={() => toggleActive.mutate(c)} className="btn-ghost btn-sm !px-2" title="Toggle active">
                             {c.is_active
                               ? <ToggleRight size={18} className="text-emerald-400" />
                               : <ToggleLeft size={18} className="text-zinc-500" />}
+                          </button>
+                          <button
+                            onClick={() => setDeleteTarget(c)}
+                            className="btn-ghost btn-sm !px-2 hover:text-rose-400 hover:bg-rose-500/10"
+                            title="Delete customer"
+                          >
+                            <Trash size={15} className="text-rose-400" />
                           </button>
                         </div>
                       </td>
@@ -152,10 +209,21 @@ export default function CustomersPage() {
         </div>
       </div>
 
+      {/* Edit / Add Modal */}
       {modal && (
         <CustomerModal
           onClose={() => setModal(null)}
           existing={modal === "add" ? null : modal}
+        />
+      )}
+
+      {/* Delete Confirm Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          customer={deleteTarget}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+          isPending={deleteMutation.isPending}
         />
       )}
     </div>

@@ -7,12 +7,52 @@ import {
 import toast from "react-hot-toast";
 import api from "../lib/api";
 
+function DeleteConfirmModal({ product, onConfirm, onCancel, isPending }) {
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
+        <div className="p-6 flex flex-col items-center text-center gap-4">
+          <div className="w-14 h-14 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
+            <Trash2 className="w-7 h-7 text-rose-400" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-zinc-100">Delete Product?</h3>
+            <p className="text-sm text-zinc-400 mt-1">
+              Are you sure you want to permanently delete{" "}
+              <span className="font-semibold text-zinc-200">{product.name}</span>?
+              <br />
+              <span className="text-rose-400/80 text-xs mt-1 block">This action cannot be undone.</span>
+            </p>
+          </div>
+          <div className="flex gap-3 w-full mt-1">
+            <button
+              onClick={onCancel}
+              disabled={isPending}
+              className="flex-1 px-4 py-2 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={isPending}
+              className="flex-1 px-4 py-2 rounded-lg text-sm font-medium bg-rose-600 hover:bg-rose-500 text-white transition-colors disabled:opacity-50"
+            >
+              {isPending ? "Deleting…" : "Delete"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProductsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [filterActive, setFilterActive] = useState("all");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -91,12 +131,16 @@ export default function ProductsPage() {
     },
   });
 
-  // Delete mutation
+  // Delete mutation (hard delete)
   const deleteMutation = useMutation({
     mutationFn: (id) => api.delete(`/products/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries(["products"]);
-      toast.success("Product deactivated");
+      toast.success("Product deleted");
+      setDeleteTarget(null);
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.detail || "Failed to delete product");
     },
   });
 
@@ -288,21 +332,16 @@ export default function ProductsPage() {
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
-                          {p.is_active && (
-                            <button
-                              onClick={() => {
-                                if (confirm(`Deactivate product "${p.name}"?`)) {
-                                  deleteMutation.mutate(p.id);
-                                }
-                              }}
-                              className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-                              title="Deactivate Product"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
+                          <button
+                            onClick={() => setDeleteTarget(p)}
+                            className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
+                            title="Delete Product"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </td>
+
                     </tr>
                   );
                 })}
@@ -420,6 +459,16 @@ export default function ProductsPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Delete Confirm Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          product={deleteTarget}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+          isPending={deleteMutation.isPending}
+        />
       )}
     </div>
   );

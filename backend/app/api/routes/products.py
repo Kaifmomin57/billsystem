@@ -87,6 +87,6 @@ def delete_product(
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    product.is_active = False
+    db.delete(product)
     db.commit()
-    return {"message": "Product deactivated successfully"}
+    return {"message": "Product deleted successfully"}

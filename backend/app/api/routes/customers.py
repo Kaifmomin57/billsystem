@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -48,8 +48,20 @@ def create_customer(body: CustomerIn, db: Session = Depends(get_db), _=Depends(g
 @router.put("/{customer_id}")
 def update_customer(customer_id: int, body: CustomerIn, db: Session = Depends(get_db), _=Depends(get_current_user)):
     c = db.query(Customer).filter(Customer.id == customer_id).first()
-    if not c: raise Exception("Customer not found")
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
     for k, v in body.model_dump().items():
         setattr(c, k, v)
     db.commit(); db.refresh(c)
     return {"id": c.id, "name": c.name}
+
+
+@router.delete("/{customer_id}")
+def delete_customer(customer_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    c = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    db.delete(c)
+    db.commit()
+    return {"message": "Customer deleted successfully"}
+
