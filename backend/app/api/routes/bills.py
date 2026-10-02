@@ -101,6 +101,86 @@ def create_manual_bill(data: BillCreate, db: Session = Depends(get_db), current_
     db.refresh(bill)
     return _format_bill_out(bill, db)
 
+# IMPORTANT: Specific routes must come BEFORE generic {bill_id} route
+
+@router.get("/whatsapp-gateway-status")
+def get_whatsapp_gateway_status():
+    """Checks the live connectivity status of the OpenWA WhatsApp Gateway."""
+    return check_openwa_status()
+
+@router.post("/bulk-whatsapp")
+def bulk_send_whatsapp(payload: BulkWhatsAppRequest, db: Session = Depends(get_db)):
+    """Sends WhatsApp bill invoices in bulk to all selected customer bills."""
+    results = []
+    sent_count = 0
+    failed_count = 0
+    skipped_count = 0
+    
+    for bill_id in payload.bill_ids:
+        bill = db.query(Bill).filter(Bill.id == bill_id).first()
+        if not bill:
+            results.append({"bill_id": bill_id, "status": "failed", "error": "Bill not found"})
+            failed_count += 1
+            continue
+            
+        data = _build_bill_whatsapp_payload(bill, db)
+        formatted = data["formatted"]
+        cleaned_phone = data["phone"]
+        
+        if not cleaned_phone:
+            results.append({
+                "bill_id": bill_id,
+                "bill_no": formatted.bill_no,
+                "customer_name": formatted.customer_name,
+                "status": "skipped",
+                "error": "No phone number saved for customer"
+            })
+            skipped_count += 1
+            continue
+            
+        send_res = send_whatsapp_direct(
+            phone=cleaned_phone,
+            message=data["message"],
+            pdf_bytes=data["pdf_bytes"],
+            pdf_url=data["pdf_url"],
+            pdf_filename=data["pdf_filename"]
+        )
+        
+        if send_res.get("success"):
+            sent_count += 1
+            results.append({
+                "bill_id": bill_id,
+                "bill_no": formatted.bill_no,
+                "customer_name": formatted.customer_name,
+                "phone": cleaned_phone,
+                "status": "sent",
+                "provider": send_res.get("provider", "direct_api"),
+                "mode": send_res.get("mode", "direct_api"),
+                "whatsapp_url": send_res.get("whatsapp_url"),
+                "pdf_url": data["pdf_url"]
+            })
+        else:
+            failed_count += 1
+            results.append({
+                "bill_id": bill_id,
+                "bill_no": formatted.bill_no,
+                "customer_name": formatted.customer_name,
+                "phone": cleaned_phone,
+                "status": "failed",
+                "error": send_res.get("error")
+            })
+            
+    return {
+        "total": len(payload.bill_ids),
+        "sent": sent_count,
+        "failed": failed_count,
+        "skipped": skipped_count,
+        "delay_seconds": payload.delay_seconds,
+        "details": results
+    }
+
+# Generic {bill_id} routes come AFTER specific ones
+
 @router.get("/{bill_id}", response_model=BillOut)
 def get_bill(bill_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     bill = db.query(Bill).filter(Bill.id == bill_id).first()
@@ -263,11 +343,6 @@ def get_bill_pdf(bill_id: int, db: Session = Depends(get_db)):
         }
     )
 
-@router.get("/whatsapp-gateway-status")
-def get_whatsapp_gateway_status():
-    """Checks the live connectivity status of the OpenWA WhatsApp Gateway."""
-    return check_openwa_status()
-
 @router.get("/{bill_id}/whatsapp-link")
 def get_whatsapp_share_link(bill_id: int, db: Session = Depends(get_db)):
     """Returns formatted WhatsApp message & click-to-chat URL."""
@@ -311,6 +386,26 @@ def get_whatsapp_share_link(bill_id: int, db: Session = Depends(get_db)):
         "message": message_text,
         "whatsapp_url": wa_url
     }
+
+@router.post("/{bill_id}/send-whatsapp")
+def send_bill_whatsapp_direct(bill_id: int, db: Session = Depends(get_db)):
+    """Dispatches a single bill invoice PDF directly to customer via OpenWA / WhatsApp."""
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+        
+    payload = _build_bill_whatsapp_payload(bill, db)
+    if not payload["phone"]:
+        raise HTTPException(status_code=400, detail="Customer has no phone number saved.")
+        
+    res = send_whatsapp_direct(
+        phone=payload["phone"],
+        message=payload["message"],
+        pdf_bytes=payload["pdf_bytes"],
+        pdf_url=payload["pdf_url"],
+        pdf_filename=payload["pdf_filename"]
+    )
+    return res
 
 def _build_bill_whatsapp_payload(bill, db):
     """Helper to build PDF bytes, Cloudinary URL, and message for a bill."""
@@ -394,95 +489,4 @@ def _build_bill_whatsapp_payload(bill, db):
         "pdf_bytes": pdf_bytes,
         "pdf_url": pdf_url,
         "pdf_filename": pdf_filename
-    }
-
-@router.post("/{bill_id}/send-whatsapp")
-def send_bill_whatsapp_direct(bill_id: int, db: Session = Depends(get_db)):
-    """Dispatches a single bill invoice PDF directly to customer via OpenWA / WhatsApp."""
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill:
-        raise HTTPException(status_code=404, detail="Bill not found")
-        
-    payload = _build_bill_whatsapp_payload(bill, db)
-    if not payload["phone"]:
-        raise HTTPException(status_code=400, detail="Customer has no phone number saved.")
-        
-    res = send_whatsapp_direct(
-        phone=payload["phone"],
-        message=payload["message"],
-        pdf_bytes=payload["pdf_bytes"],
-        pdf_url=payload["pdf_url"],
-        pdf_filename=payload["pdf_filename"]
-    )
-    return res
-
-@router.post("/bulk-whatsapp")
-def bulk_send_whatsapp(payload: BulkWhatsAppRequest, db: Session = Depends(get_db)):
-    """Sends WhatsApp bill invoices in bulk to all selected customer bills."""
-    results = []
-    sent_count = 0
-    failed_count = 0
-    skipped_count = 0
-    
-    for bill_id in payload.bill_ids:
-        bill = db.query(Bill).filter(Bill.id == bill_id).first()
-        if not bill:
-            results.append({"bill_id": bill_id, "status": "failed", "error": "Bill not found"})
-            failed_count += 1
-            continue
-            
-        data = _build_bill_whatsapp_payload(bill, db)
-        formatted = data["formatted"]
-        cleaned_phone = data["phone"]
-        
-        if not cleaned_phone:
-            results.append({
-                "bill_id": bill_id,
-                "bill_no": formatted.bill_no,
-                "customer_name": formatted.customer_name,
-                "status": "skipped",
-                "error": "No phone number saved for customer"
-            })
-            skipped_count += 1
-            continue
-            
-        send_res = send_whatsapp_direct(
-            phone=cleaned_phone,
-            message=data["message"],
-            pdf_bytes=data["pdf_bytes"],
-            pdf_url=data["pdf_url"],
-            pdf_filename=data["pdf_filename"]
-        )
-        
-        if send_res.get("success"):
-            sent_count += 1
-            results.append({
-                "bill_id": bill_id,
-                "bill_no": formatted.bill_no,
-                "customer_name": formatted.customer_name,
-                "phone": cleaned_phone,
-                "status": "sent",
-                "provider": send_res.get("provider", "direct_api"),
-                "mode": send_res.get("mode", "direct_api"),
-                "whatsapp_url": send_res.get("whatsapp_url"),
-                "pdf_url": data["pdf_url"]
-            })
-        else:
-            failed_count += 1
-            results.append({
-                "bill_id": bill_id,
-                "bill_no": formatted.bill_no,
-                "customer_name": formatted.customer_name,
-                "phone": cleaned_phone,
-                "status": "failed",
-                "error": send_res.get("error")
-            })
-            
-    return {
-        "total": len(payload.bill_ids),
-        "sent": sent_count,
-        "failed": failed_count,
-        "skipped": skipped_count,
-        "delay_seconds": payload.delay_seconds,
-        "details": results
     }
