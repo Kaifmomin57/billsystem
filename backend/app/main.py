@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import get_settings
 from app.core.database import Base, engine, SessionLocal
 from app.core.security import get_password_hash
-from app.models.models import User, Product, ProductRate, ColumnMapping, TagDictionary, Customer
+from app.models.models import User, TagDictionary
 
 # Import routers
 from app.api.routes import auth, customers, products, rates, bills, uploads, settings as settings_route, reports, stats
@@ -48,72 +48,37 @@ app.include_router(stats.router)
 def on_startup():
     # Create all DB tables
     Base.metadata.create_all(bind=engine)
-    
+
     db = SessionLocal()
     try:
-        # 1. Seed default admin user
-        admin = db.query(User).filter(User.username == "admin").first()
-        if not admin:
+        # ── Seed admin user ONLY if no users exist ────────────────────────
+        if db.query(User).count() == 0:
             admin = User(
-                username="admin",
-                password_hash=get_password_hash("admin123")
+                username="mohsinmomin",
+                password_hash=get_password_hash("KFC@2026")
             )
             db.add(admin)
-            
-        # 2. Seed default products and column mappings if empty
-        if db.query(Product).count() == 0:
-            default_prods = [
-                ("M (Milk / Malai)", "kg", 60.0, "M"),
-                ("R (Rabdi / Rasgulla)", "kg", 240.0, "R"),
-                ("B (Butter / Barfi)", "kg", 450.0, "B"),
-                ("P (Paneer)", "kg", 320.0, "P"),
-                ("K (Khoya / Khowa)", "kg", 280.0, "K"),
-                ("T (Toned / Tea Milk)", "litre", 52.0, "T"),
-                ("JB (Gulab Jamun / Jalebi)", "kg", 220.0, "JB")
-            ]
-            for p_name, unit, base_rate, code in default_prods:
-                prod = Product(name=p_name, unit=unit, is_active=True)
-                db.add(prod)
-                db.flush()
-                
-                # Base rate
-                pr = ProductRate(product_id=prod.id, rate=base_rate)
-                db.add(pr)
-                
-                # Column mapping
-                cm = ColumnMapping(column_code=code, product_id=prod.id, active=True)
-                db.add(cm)
 
-        # 3. Seed default tag dictionary
+        # ── Seed tag dictionary ONLY if empty ─────────────────────────────
         if db.query(TagDictionary).count() == 0:
             default_tags = [
                 ("pd", "Paid / Cash Received"),
                 ("mi", "Minus / Deduction"),
-                ("N", "New Account / Entry"),
-                ("B", "Balance Carried Forward"),
-                ("R", "Returned Goods"),
-                ("k", "Kharab / Spoiled / Replaced")
+                ("N",  "New Account / Entry"),
+                ("B",  "Balance Carried Forward"),
+                ("R",  "Returned Goods"),
+                ("k",  "Kharab / Spoiled / Replaced")
             ]
             for tag, meaning in default_tags:
-                t = TagDictionary(tag=tag, meaning=meaning)
-                db.add(t)
+                db.add(TagDictionary(tag=tag, meaning=meaning))
 
-        # 4. Seed sample customers if empty
-        if db.query(Customer).count() == 0:
-            sample_custs = [
-                ("Ramvir Sweets", "9876543210", "Main Bazaar, Shop 12"),
-                ("Sharma Dairy", "9812345678", "Sector 4"),
-                ("Vaishali Sweets", "9823456789", "Station Road"),
-                ("Gupta Caterers", "9834567890", "Civil Lines"),
-                ("Radhe Shyam Dairy", "9845678901", "Old City")
-            ]
-            for c_name, phone, addr in sample_custs:
-                c = Customer(name=c_name, phone=phone, address=addr, is_active=True)
-                db.add(c)
+        # NOTE: Products and Customers are NOT seeded here.
+        # Manage them through the UI to avoid overwriting production data.
 
         db.commit()
     finally:
         db.close()
+
 
 
 @app.get("/")
