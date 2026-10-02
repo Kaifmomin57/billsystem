@@ -124,7 +124,7 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
     collection_rate = (grand_received / grand_sale * 100) if grand_sale > 0 else 0.0
 
     # ══════════════════════════════════════════════════════════════════════════
-    # SHEET 1: CUSTOMER SUMMARY (ग्राहक भुगतान एवं बिक्री सारांश)
+    # SHEET 1: CUSTOMER SUMMARY
     # ══════════════════════════════════════════════════════════════════════════
     ws1 = wb.active
     ws1.title = "Customer Summary"
@@ -138,10 +138,10 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
 
     # KPI Cards (Rows 3 & 4)
     kpis = [
-        ("TOTAL SALES (कुल बिक्री)", f"₹{grand_sale:,.2f}", "16A34A"),
-        ("RECEIVED (जमा राशि)", f"₹{grand_received:,.2f}", "2563EB"),
-        ("PENDING (बाकी राशि)", f"₹{grand_pending:,.2f}", "DC2626"),
-        ("COLLECTION RATE (वसूली %)", f"{collection_rate:.1f}%", "7C3AED"),
+        ("TOTAL SALES", f"₹{grand_sale:,.2f}", "16A34A"),
+        ("RECEIVED AMOUNT", f"₹{grand_received:,.2f}", "2563EB"),
+        ("PENDING BALANCE", f"₹{grand_pending:,.2f}", "DC2626"),
+        ("COLLECTION RATE", f"{collection_rate:.1f}%", "7C3AED"),
     ]
     _apply_kpi_cards(ws1, kpis, start_row=3, num_cols=8)
     ws1.row_dimensions[3].height = 18
@@ -203,7 +203,7 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
 
     # Grand Total Row
     ws1.merge_cells(f"A{current_row}:D{current_row}")
-    gt_lbl = ws1.cell(row=current_row, column=1, value="GRAND TOTAL (कुल योग)")
+    gt_lbl = ws1.cell(row=current_row, column=1, value="GRAND TOTAL")
     gt_lbl.font = TOTAL_FONT; gt_lbl.fill = TOTAL_FILL
     gt_lbl.alignment = RIGHT; gt_lbl.border = CELL_BORDER
 
@@ -224,7 +224,7 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
         ws1.column_dimensions[get_column_letter(ci)].width = w
 
     # ══════════════════════════════════════════════════════════════════════════
-    # SHEET 2: DETAILED BILLS & ITEMS (विस्तृत बिल एवं उत्पाद विवरण)
+    # SHEET 2: DETAILED BILLS & ITEMS
     # ══════════════════════════════════════════════════════════════════════════
     ws2 = wb.create_sheet(title="Detailed Bills & Items")
 
@@ -349,7 +349,7 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
 
     # Grand Total Row for Sheet 2
     ws2.merge_cells(f"A{r2}:I{r2}")
-    lbl2 = ws2.cell(row=r2, column=1, value="GRAND TOTAL (कुल योग)")
+    lbl2 = ws2.cell(row=r2, column=1, value="GRAND TOTAL")
     lbl2.font = TOTAL_FONT; lbl2.fill = TOTAL_FILL
     lbl2.alignment = RIGHT; lbl2.border = CELL_BORDER
 
@@ -410,10 +410,10 @@ def build_daily_by_product(report_data: Union[Dict[str, Any], List[Dict]], repor
 
     # KPI Cards (Rows 3 & 4)
     kpis = [
-        ("TOTAL SALES (कुल बिक्री)", f"₹{grand_sale:,.2f}", "16A34A"),
-        ("RECEIVED (जमा राशि)", f"₹{grand_received:,.2f}", "2563EB"),
-        ("PENDING (बाकी राशि)", f"₹{grand_pending:,.2f}", "DC2626"),
-        ("COLLECTION RATE (वसूली %)", f"{collection_rate:.1f}%", "7C3AED"),
+        ("TOTAL SALES", f"₹{grand_sale:,.2f}", "16A34A"),
+        ("RECEIVED AMOUNT", f"₹{grand_received:,.2f}", "2563EB"),
+        ("PENDING BALANCE", f"₹{grand_pending:,.2f}", "DC2626"),
+        ("COLLECTION RATE", f"{collection_rate:.1f}%", "7C3AED"),
     ]
     _apply_kpi_cards(ws, kpis, start_row=3, num_cols=8)
     ws.row_dimensions[3].height = 18
@@ -478,7 +478,7 @@ def build_daily_by_product(report_data: Union[Dict[str, Any], List[Dict]], repor
 
     # Grand Total Row
     ws.merge_cells(f"A{current_row}:C{current_row}")
-    lbl = ws.cell(row=current_row, column=1, value="GRAND TOTAL (कुल योग)")
+    lbl = ws.cell(row=current_row, column=1, value="GRAND TOTAL")
     lbl.font = TOTAL_FONT; lbl.fill = TOTAL_FILL
     lbl.alignment = RIGHT; lbl.border = CELL_BORDER
 

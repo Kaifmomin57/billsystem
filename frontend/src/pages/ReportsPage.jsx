@@ -216,7 +216,7 @@ export default function ReportsPage() {
         <div className="card p-4 sm:p-5 border-emerald-500/20 bg-gradient-to-br from-emerald-950/20 via-zinc-900 to-zinc-950">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              Total Sales (कुल बिक्री)
+              Total Sales
             </span>
             <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
               <ArrowUpRight className="w-4 h-4" />
@@ -234,7 +234,7 @@ export default function ReportsPage() {
         <div className="card p-4 sm:p-5 border-blue-500/20 bg-gradient-to-br from-blue-950/20 via-zinc-900 to-zinc-950">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              Received (जमा राशि)
+              Received Amount
             </span>
             <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center">
               <CheckCircle2 className="w-4 h-4" />
@@ -252,7 +252,7 @@ export default function ReportsPage() {
         <div className="card p-4 sm:p-5 border-rose-500/20 bg-gradient-to-br from-rose-950/20 via-zinc-900 to-zinc-950">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              Pending / Due (बाकी राशि)
+              Pending Balance
             </span>
             <div className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-400 flex items-center justify-center">
               <AlertCircle className="w-4 h-4" />
@@ -270,7 +270,7 @@ export default function ReportsPage() {
         <div className="card p-4 sm:p-5 border-purple-500/20 bg-gradient-to-br from-purple-950/20 via-zinc-900 to-zinc-950">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              Collection Rate (वसूली %)
+              Collection Rate
             </span>
             <div className="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center">
               <Percent className="w-4 h-4" />
@@ -388,7 +388,7 @@ export default function ReportsPage() {
                 <tfoot>
                   <tr className="border-t-2 border-zinc-700 bg-zinc-950 font-bold text-zinc-100">
                     <td colSpan={4} className="py-3 px-3 text-right uppercase tracking-wider text-xs">
-                      Grand Total (कुल योग):
+                      Grand Total:
                     </td>
                     <td className="py-3 px-3 text-right font-mono text-emerald-400 text-sm">
                       {formatCurrency(totals.total_sales)}
@@ -461,7 +461,7 @@ export default function ReportsPage() {
                 <tfoot>
                   <tr className="border-t-2 border-zinc-700 bg-zinc-950 font-bold text-zinc-100">
                     <td colSpan={5} className="py-3 px-3 text-right uppercase tracking-wider text-xs">
-                      Grand Total (कुल योग):
+                      Grand Total:
                     </td>
                     <td className="py-3 px-3 text-right font-mono text-emerald-400 text-sm">
                       {formatCurrency(totals.total_sales)}
