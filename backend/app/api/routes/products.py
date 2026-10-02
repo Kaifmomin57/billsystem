@@ -84,9 +84,19 @@ def delete_product(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    from app.models.models import ProductRate, CustomerRate, RateHistory, ColumnMapping, BillItem
+
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
+
+    # Cascade delete all related records in dependency order
+    db.query(BillItem).filter(BillItem.product_id == product_id).delete(synchronize_session=False)
+    db.query(CustomerRate).filter(CustomerRate.product_id == product_id).delete(synchronize_session=False)
+    db.query(ProductRate).filter(ProductRate.product_id == product_id).delete(synchronize_session=False)
+    db.query(RateHistory).filter(RateHistory.product_id == product_id).delete(synchronize_session=False)
+    db.query(ColumnMapping).filter(ColumnMapping.product_id == product_id).delete(synchronize_session=False)
+
     db.delete(product)
     db.commit()
     return {"message": "Product deleted successfully"}
