@@ -7,6 +7,7 @@ from typing import Dict, Any
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.models import Bill, Customer, Product, Upload, User
+from sqlalchemy.orm import joinedload
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -68,8 +69,15 @@ def get_dashboard_stats(
         for d in top_debtors_raw
     ]
 
-    # Recent bills
-    recent_bills = bills_query.order_by(Bill.created_at.desc()).limit(5).all()
+    # Recent bills — only show bills with a valid (existing) customer
+    recent_bills = (
+        db.query(Bill)
+        .join(Customer, Customer.id == Bill.customer_id)   # INNER JOIN = excludes orphans
+        .filter(Bill.source != "ledger_ai")
+        .order_by(Bill.created_at.desc())
+        .limit(5)
+        .all()
+    )
     recent_bills_data = []
     for b in recent_bills:
         cust = db.query(Customer).filter(Customer.id == b.customer_id).first()
