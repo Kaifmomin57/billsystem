@@ -1,0 +1,151 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    @apply bg-zinc-950 text-zinc-100 font-sans antialiased;
+    min-height: 100dvh;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-zinc-900; }
+  ::-webkit-scrollbar-thumb { @apply bg-zinc-700 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-zinc-600; }
+}
+
+@layer components {
+  /* ─── Layout ────────────────────────────────── */
+  .page-container {
+    @apply max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  /* ─── Cards ─────────────────────────────────── */
+  .card {
+    @apply bg-zinc-900 border border-zinc-800 rounded-lg shadow-card;
+  }
+  .card-hover {
+    @apply hover:border-zinc-700 hover:shadow-card-hover transition-all duration-150;
+  }
+
+  /* ─── Buttons ────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md font-medium
+           transition-all duration-150 focus:outline-none focus:ring-2
+           focus:ring-offset-2 focus:ring-offset-zinc-950 cursor-pointer
+           active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-sm  { @apply btn px-3 py-1.5 text-sm; }
+  .btn-md  { @apply btn px-4 py-2 text-sm; }
+  .btn-lg  { @apply btn px-5 py-2.5 text-base; }
+
+  .btn-primary {
+    @apply btn px-4 py-2 text-sm bg-emerald-600 text-white hover:bg-emerald-500
+           focus:ring-emerald-500 shadow-glow hover:shadow-none;
+  }
+  .btn-secondary {
+    @apply btn px-4 py-2 text-sm bg-zinc-800 text-zinc-200 border border-zinc-700
+           hover:bg-zinc-700 hover:border-zinc-600 focus:ring-zinc-500;
+  }
+  .btn-ghost {
+    @apply btn px-4 py-2 text-sm bg-transparent text-zinc-400 hover:text-zinc-100
+           hover:bg-zinc-800 focus:ring-zinc-500;
+  }
+  .btn-danger {
+    @apply btn px-4 py-2 text-sm bg-rose-600 text-white hover:bg-rose-500 focus:ring-rose-500;
+  }
+
+  /* ─── Form Inputs ────────────────────────────── */
+  .input {
+    @apply w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2
+           text-sm text-zinc-100 placeholder:text-zinc-500
+           focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent
+           transition-colors duration-150;
+  }
+  /* Alias used by BillsPage / ProductsPage / RatesPage */
+  .input-field { @apply input; }
+  .label {
+    @apply block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wide;
+  }
+  .input-group { @apply flex flex-col gap-0; }
+
+  /* ─── Tables ─────────────────────────────────── */
+  .data-table {
+    @apply w-full text-sm text-left;
+  }
+  .data-table thead tr {
+    @apply border-b border-zinc-800;
+  }
+  .data-table thead th {
+    @apply px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider;
+  }
+  .data-table tbody tr {
+    @apply border-b border-zinc-800/60 hover:bg-zinc-800/40 transition-colors duration-100;
+  }
+  .data-table tbody td {
+    @apply px-4 py-3 text-zinc-300;
+  }
+
+  /* ─── Badges / Chips ─────────────────────────── */
+  .badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full
+           text-xs font-medium border;
+  }
+  .badge-green  { @apply badge bg-emerald-950 text-emerald-400 border-emerald-900; }
+  .badge-yellow { @apply badge bg-amber-950  text-amber-400   border-amber-900;  }
+  .badge-red    { @apply badge bg-rose-950   text-rose-400    border-rose-900;   }
+  .badge-blue   { @apply badge bg-sky-950    text-sky-400     border-sky-900;    }
+  .badge-zinc   { @apply badge bg-zinc-800   text-zinc-400    border-zinc-700;   }
+
+  /* ─── Page Header ────────────────────────────── */
+  .page-header {
+    @apply flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6;
+  }
+  .page-title {
+    @apply text-xl font-bold text-zinc-100 tracking-tight;
+  }
+  .page-subtitle {
+    @apply text-xs sm:text-sm text-zinc-400 mt-0.5;
+  }
+
+  /* ─── Sidebar ────────────────────────────────── */
+  .sidebar-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium
+           text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800
+           transition-all duration-150 cursor-pointer;
+  }
+  .sidebar-link.active {
+    @apply bg-zinc-800 text-zinc-100;
+  }
+  .sidebar-link-icon { @apply shrink-0 text-[18px]; }
+
+  /* ─── Stat Cards ─────────────────────────────── */
+  .stat-card {
+    @apply card p-5 flex flex-col gap-1;
+  }
+  .stat-value {
+    @apply text-2xl font-bold text-zinc-100 font-mono tracking-tight;
+  }
+  .stat-label {
+    @apply text-xs text-zinc-500 uppercase tracking-wider;
+  }
+  .stat-change-pos { @apply text-xs text-emerald-400 font-medium; }
+  .stat-change-neg { @apply text-xs text-rose-400 font-medium; }
+
+  /* ─── Dividers ───────────────────────────────── */
+  .divider { @apply border-t border-zinc-800; }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+  .animate-fade-in { animation: fadeIn 0.2s ease-out; }
+  .animate-slide-in { animation: slideIn 0.2s ease-out; }
+  .font-tabular { font-variant-numeric: tabular-nums; }
+}
