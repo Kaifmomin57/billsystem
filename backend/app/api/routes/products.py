@@ -90,7 +90,7 @@ def delete_product(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Cascade delete all related records in dependency order
+    # ── Cascade delete all related records ────────────────────────────────
     db.query(BillItem).filter(BillItem.product_id == product_id).delete(synchronize_session=False)
     db.query(CustomerRate).filter(CustomerRate.product_id == product_id).delete(synchronize_session=False)
     db.query(ProductRate).filter(ProductRate.product_id == product_id).delete(synchronize_session=False)
