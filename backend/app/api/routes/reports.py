@@ -12,6 +12,7 @@ from app.services.excel_service import build_daily_by_product, build_daily_by_cu
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
+
 @router.get("/stats")
 def get_reports_stats(
     db: Session = Depends(get_db),
@@ -19,12 +20,12 @@ def get_reports_stats(
 ):
     total_customers = db.query(Customer).filter(Customer.is_active == True).count()
     total_products = db.query(Product).filter(Product.is_active == True).count()
-    total_bills = db.query(Bill).count()
-    total_revenue = db.query(func.sum(Bill.total_amount)).scalar() or 0.0
+    total_bills = db.query(Bill).join(Customer, Customer.id == Bill.customer_id).count()
+    total_revenue = db.query(func.sum(Bill.total_amount)).join(Customer, Customer.id == Bill.customer_id).scalar() or 0.0
 
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
-    today_bills = db.query(Bill).filter(Bill.bill_date == today_str).count()
-    today_revenue = db.query(func.sum(Bill.total_amount)).filter(Bill.bill_date == today_str).scalar() or 0.0
+    today_bills = db.query(Bill).join(Customer, Customer.id == Bill.customer_id).filter(Bill.bill_date == today_str).count()
+    today_revenue = db.query(func.sum(Bill.total_amount)).join(Customer, Customer.id == Bill.customer_id).filter(Bill.bill_date == today_str).scalar() or 0.0
 
     return {
         "total_customers": total_customers,
@@ -38,73 +39,207 @@ def get_reports_stats(
     }
 
 
-@router.get("/daily/by-product")
-def get_daily_by_product(
+def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, Any]:
+    """
+    Core data extraction engine for a date range:
+    Accurately computes Customer summaries, Product summaries,
+    Detailed itemized bills, and Grand Totals (Total Sale, Received, Pending).
+    """
+    bills = (
+        db.query(Bill)
+        .join(Customer, Customer.id == Bill.customer_id)
+        .filter(Bill.bill_date >= start, Bill.bill_date <= end)
+        .order_by(Customer.name, Bill.bill_date, Bill.id)
+        .all()
+    )
+
+    cust_map: Dict[int, Dict[str, Any]] = {}
+    detailed_rows: List[Dict[str, Any]] = []
+    prod_map: Dict[int, Dict[str, Any]] = {}
+
+    for bill in bills:
+        c = bill.customer
+        cid = c.id
+        if cid not in cust_map:
+            cust_map[cid] = {
+                "customer_id": cid,
+                "customer_name": c.name,
+                "phone": c.phone or "",
+                "bills_count": 0,
+                "total_sale": 0.0,
+                "amount_paid": 0.0,
+                "balance_due": 0.0,
+            }
+
+        b_total = float(bill.total_amount or 0)
+        b_paid  = float(bill.amount_paid or 0)
+        b_due   = float(bill.balance_due or 0)
+
+        cust_map[cid]["bills_count"] += 1
+        cust_map[cid]["total_sale"] += b_total
+        cust_map[cid]["amount_paid"] += b_paid
+        cust_map[cid]["balance_due"] += b_due
+
+        items = bill.items
+        if items:
+            for idx, itm in enumerate(items):
+                prod = itm.product
+                pname = prod.name if prod else (itm.tag or "General Item")
+                punit = prod.unit if prod else "kg"
+                pid = itm.product_id or 0
+                amt = float(itm.amount or 0)
+                qty = float(itm.quantity or 0)
+                rate = float(itm.rate or 0)
+
+                detailed_rows.append({
+                    "customer_name": c.name,
+                    "customer_phone": c.phone or "",
+                    "bill_no": bill.bill_no,
+                    "bill_date": bill.bill_date,
+                    "product_name": pname,
+                    "quantity": qty,
+                    "unit": punit,
+                    "rate": rate,
+                    "amount": amt,
+                    "total_bill_amount": b_total,
+                    "amount_paid": b_paid,
+                    "balance_due": b_due,
+                    "payment_method": bill.payment_method or "Cash",
+                    "payment_status": bill.payment_status or "unpaid",
+                    "is_first_item": (idx == 0),
+                })
+
+                # Product aggregation
+                if pid not in prod_map:
+                    prod_map[pid] = {
+                        "product_id": pid,
+                        "product_name": pname,
+                        "unit": punit,
+                        "total_qty": 0.0,
+                        "total_amount": 0.0,
+                        "amount_paid": 0.0,
+                        "balance_due": 0.0,
+                    }
+
+                prod_map[pid]["total_qty"] += qty
+                prod_map[pid]["total_amount"] += amt
+
+                if b_total > 0:
+                    share = amt / b_total
+                    prod_map[pid]["amount_paid"] += b_paid * share
+                    prod_map[pid]["balance_due"] += b_due * share
+        else:
+            # Lumpsum bill with no line items
+            detailed_rows.append({
+                "customer_name": c.name,
+                "customer_phone": c.phone or "",
+                "bill_no": bill.bill_no,
+                "bill_date": bill.bill_date,
+                "product_name": "Invoice Total",
+                "quantity": 1,
+                "unit": "nos",
+                "rate": b_total,
+                "amount": b_total,
+                "total_bill_amount": b_total,
+                "amount_paid": b_paid,
+                "balance_due": b_due,
+                "payment_method": bill.payment_method or "Cash",
+                "payment_status": bill.payment_status or "unpaid",
+                "is_first_item": True,
+            })
+
+    # Prepare customer summary records
+    customer_summaries = list(cust_map.values())
+    for cs in customer_summaries:
+        tot = cs["total_sale"]
+        due = cs["balance_due"]
+        paid = cs["amount_paid"]
+        cs["payment_status"] = "paid" if tot > 0 and due <= 0 else "partial" if paid > 0 else "unpaid"
+
+    customer_summaries.sort(key=lambda x: x["customer_name"].lower())
+
+    # Prepare product summary records
+    product_summaries = list(prod_map.values())
+    for p in product_summaries:
+        qty = p["total_qty"]
+        amt = p["total_amount"]
+        p["avg_rate"] = round(amt / qty, 2) if qty > 0 else 0.0
+        p["total_sale"] = amt
+
+    product_summaries.sort(key=lambda x: x["total_amount"], reverse=True)
+
+    # Compute period grand totals
+    grand_sale = sum(float(b.total_amount or 0) for b in bills)
+    grand_paid = sum(float(b.amount_paid or 0) for b in bills)
+    grand_due  = sum(float(b.balance_due or 0) for b in bills)
+    collection_rate = (grand_paid / grand_sale * 100) if grand_sale > 0 else 0.0
+
+    totals = {
+        "total_sales": grand_sale,
+        "total_received": grand_paid,
+        "total_pending": grand_due,
+        "collection_rate": round(collection_rate, 1),
+        "total_bills": len(bills),
+        "total_customers": len(customer_summaries),
+        "total_qty": sum(p["total_qty"] for p in product_summaries),
+    }
+
+    return {
+        "date_from": start,
+        "date_to": end,
+        "totals": totals,
+        "customers": customer_summaries,
+        "products": product_summaries,
+        "detailed_rows": detailed_rows,
+    }
+
+
+@router.get("/summary")
+def get_reports_summary(
     date_from: Optional[str] = Query(None, description="YYYY-MM-DD start date"),
     date_to:   Optional[str] = Query(None, description="YYYY-MM-DD end date"),
-    date: Optional[str] = Query(None, description="YYYY-MM-DD (single day, legacy)"),
+    date:      Optional[str] = Query(None, description="YYYY-MM-DD single day"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """
+    Returns live analytical summary for the selected period:
+    Total Sales, Received, Pending, Customer breakdown, and Product breakdown.
+    Powers the executive dashboard on the Reports page.
+    """
     start = date_from or date or datetime.utcnow().strftime("%Y-%m-%d")
     end   = date_to   or date or start
 
-    # ── Aggregate quantity + sale amount per product ──────────────────────
-    items = (
-        db.query(
-            Product.id.label("product_id"),
-            Product.name.label("product_name"),
-            Product.unit.label("unit"),
-            func.sum(BillItem.quantity).label("total_qty"),
-            func.sum(BillItem.amount).label("total_amount"),
-        )
-        .join(Bill, Bill.id == BillItem.bill_id)
-        .join(Product, Product.id == BillItem.product_id)
-        .filter(Bill.bill_date >= start, Bill.bill_date <= end)
-        .group_by(Product.id, Product.name, Product.unit)
-        .all()
-    )
+    data = _get_report_data_for_period(start, end, db)
+    return {
+        "date_from": data["date_from"],
+        "date_to": data["date_to"],
+        "totals": data["totals"],
+        "customers": data["customers"],
+        "products": data["products"],
+    }
 
-    # ── Payment totals per product (join via bill items → bills) ──────────
-    # For each product, sum amount_paid and balance_due from all bills
-    # that contain that product in the date range
-    payment_q = (
-        db.query(
-            BillItem.product_id,
-            func.sum(Bill.amount_paid).label("amount_paid"),
-            func.sum(Bill.balance_due).label("balance_due"),
-        )
-        .join(Bill, Bill.id == BillItem.bill_id)
-        .filter(Bill.bill_date >= start, Bill.bill_date <= end)
-        .filter(BillItem.product_id.isnot(None))
-        .group_by(BillItem.product_id)
-        .all()
-    )
-    payment_map = {p.product_id: p for p in payment_q}
 
-    rows = []
-    for itm in items:
-        qty  = float(itm.total_qty    or 0)
-        amt  = float(itm.total_amount or 0)
-        avg_rate = round(amt / qty, 2) if qty > 0 else 0.0
-        pay  = payment_map.get(itm.product_id)
-        paid    = float(pay.amount_paid  or 0) if pay else 0.0
-        pending = float(pay.balance_due  or 0) if pay else 0.0
+@router.get("/daily/by-customer")
+def get_daily_by_customer(
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD start date"),
+    date_to:   Optional[str] = Query(None, description="YYYY-MM-DD end date"),
+    date:      Optional[str] = Query(None, description="YYYY-MM-DD single day"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Downloads an Excel spreadsheet organized By Customer:
+    - Sheet 1: Customer Summary (Each customer: Total Sale, Received, Pending, Status)
+    - Sheet 2: Detailed Bills & Items breakdown with customer subtotals
+    """
+    start = date_from or date or datetime.utcnow().strftime("%Y-%m-%d")
+    end   = date_to   or date or start
 
-        rows.append({
-            "product_id":    itm.product_id,
-            "product_name":  itm.product_name,
-            "unit":          itm.unit,
-            "total_qty":     qty,
-            "avg_rate":      avg_rate,
-            "total_amount":  amt,
-            "amount_paid":   paid,
-            "balance_due":   pending,
-        })
-
+    data = _get_report_data_for_period(start, end, db)
     label = start if start == end else f"{start}_to_{end}"
-    stream = build_daily_by_product(rows, label)
-    filename = f"daily_by_product_{label}.xlsx"
+    stream = build_daily_by_customer(data, label)
+    filename = f"daily_by_customer_{label}.xlsx"
     return StreamingResponse(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -112,70 +247,27 @@ def get_daily_by_product(
     )
 
 
-@router.get("/daily/by-customer")
-def get_daily_by_customer(
+@router.get("/daily/by-product")
+def get_daily_by_product(
     date_from: Optional[str] = Query(None, description="YYYY-MM-DD start date"),
     date_to:   Optional[str] = Query(None, description="YYYY-MM-DD end date"),
-    date: Optional[str] = Query(None, description="YYYY-MM-DD (single day, legacy)"),
+    date:      Optional[str] = Query(None, description="YYYY-MM-DD single day"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """
+    Downloads an Excel spreadsheet organized By Product:
+    - Quantity sold, Average rate, Total sale
+    - Allocated received and pending per product
+    - KPI cards and Grand Totals
+    """
     start = date_from or date or datetime.utcnow().strftime("%Y-%m-%d")
     end   = date_to   or date or start
 
-    bills = (
-        db.query(Bill)
-        .filter(Bill.bill_date >= start, Bill.bill_date <= end)
-        .order_by(Bill.bill_date, Bill.customer_id)
-        .all()
-    )
-
-    rows = []
-    # Track which bills already had their payment columns emitted
-    # so we don't double-count across multiple items in same bill
-    seen_bill_ids: set = set()
-
-    for bill in bills:
-        cust = db.query(Customer).filter(Customer.id == bill.customer_id).first()
-        c_name = cust.name if cust else "Unknown"
-
-        bill_total   = float(bill.total_amount  or 0)
-        bill_paid    = float(bill.amount_paid   or 0)
-        bill_due     = float(bill.balance_due   or 0)
-        is_first_item = True  # show payment cols only on the first item row per bill
-
-        for item in bill.items:
-            prod = (
-                db.query(Product).filter(Product.id == item.product_id).first()
-                if item.product_id else None
-            )
-            amt = float(item.amount or 0)
-
-            # Prorate payment info per-item for the summary accumulation
-            # Show full bill amounts only on first item (for readability)
-            rows.append({
-                "customer_name":     c_name,
-                "bill_no":           bill.bill_no,
-                "bill_date":         bill.bill_date,
-                "product_name":      prod.name if prod else (item.tag or "—"),
-                "quantity":          float(item.quantity or 0),
-                "rate":              float(item.rate or 0),
-                "amount":            amt,
-                "total_bill_amount": bill_total   if is_first_item else "",
-                "amount_paid":       bill_paid    if is_first_item else "",
-                "balance_due":       bill_due     if is_first_item else "",
-                "payment_status":    bill.payment_status,
-                # These are used for grand-total accumulation in the excel builder
-                "item_received":     round(bill_paid * (amt / bill_total), 2)
-                                     if bill_total > 0 else 0,
-                "item_pending":      round(bill_due  * (amt / bill_total), 2)
-                                     if bill_total > 0 else 0,
-            })
-            is_first_item = False
-
+    data = _get_report_data_for_period(start, end, db)
     label = start if start == end else f"{start}_to_{end}"
-    stream = build_daily_by_customer(rows, label)
-    filename = f"daily_by_customer_{label}.xlsx"
+    stream = build_daily_by_product(data, label)
+    filename = f"daily_by_product_{label}.xlsx"
     return StreamingResponse(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
