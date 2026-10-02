@@ -5,7 +5,10 @@ from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.models import Customer
+from app.models.models import (
+    Customer, CustomerRate, CustomerAlias, RateHistory,
+    Bill, BillItem, PaymentInstallment,
+)
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
@@ -61,7 +64,20 @@ def delete_customer(customer_id: int, db: Session = Depends(get_db), _=Depends(g
     c = db.query(Customer).filter(Customer.id == customer_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Customer not found")
+
+    # ── 1. Delete bill children first ──────────────────────────────────────
+    bill_ids = [b.id for b in db.query(Bill.id).filter(Bill.customer_id == customer_id).all()]
+    if bill_ids:
+        db.query(BillItem).filter(BillItem.bill_id.in_(bill_ids)).delete(synchronize_session=False)
+        db.query(PaymentInstallment).filter(PaymentInstallment.bill_id.in_(bill_ids)).delete(synchronize_session=False)
+        db.query(Bill).filter(Bill.id.in_(bill_ids)).delete(synchronize_session=False)
+
+    # ── 2. Delete customer-level related records ────────────────────────────
+    db.query(CustomerRate).filter(CustomerRate.customer_id == customer_id).delete(synchronize_session=False)
+    db.query(RateHistory).filter(RateHistory.customer_id == customer_id).delete(synchronize_session=False)
+    db.query(CustomerAlias).filter(CustomerAlias.customer_id == customer_id).delete(synchronize_session=False)
+
+    # ── 3. Finally delete the customer ─────────────────────────────────────
     db.delete(c)
     db.commit()
     return {"message": "Customer deleted successfully"}
-
