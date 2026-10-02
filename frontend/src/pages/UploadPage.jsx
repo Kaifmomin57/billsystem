@@ -7,9 +7,7 @@ import {
   Maximize2, Minimize2
 } from "lucide-react";
 import toast from "react-hot-toast";
-import api from "../lib/api";
-
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import api, { API_BASE_URL } from "../lib/api";
 
 export default function UploadPage() {
   const queryClient = useQueryClient();
@@ -65,7 +63,8 @@ export default function UploadPage() {
       setActiveUploadId(res.data.id);
       setActiveDraft(res.data.draft_data);
       setActiveDate(res.data.page_date || new Date().toISOString().split("T")[0]);
-      setPreviewUrl(`${API_BASE}${res.data.image_url}`);
+      const img = res.data.image_url;
+      setPreviewUrl(img ? (img.startsWith("http") ? img : `${API_BASE_URL}${img}`) : null);
       setFile(null);
       refetchUploads();
     } catch (err) {
@@ -82,7 +81,8 @@ export default function UploadPage() {
       setActiveUploadId(upload.id);
       setActiveDraft(res.data.draft_data);
       setActiveDate(res.data.page_date || "");
-      setPreviewUrl(`${API_BASE}${res.data.image_url}`);
+      const img = res.data.image_url;
+      setPreviewUrl(img ? (img.startsWith("http") ? img : `${API_BASE_URL}${img}`) : null);
       setSelectedRowIndex(null);
       window.scrollTo({ top: 400, behavior: "smooth" });
     } catch (e) {

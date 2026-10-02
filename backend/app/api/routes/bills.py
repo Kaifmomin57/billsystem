@@ -57,7 +57,7 @@ def list_bills(
     limit: int = 100, db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(Bill)
+    query = db.query(Bill).join(Customer, Customer.id == Bill.customer_id)  # excludes orphan bills
     if customer_id: query = query.filter(Bill.customer_id == customer_id)
     if start_date: query = query.filter(Bill.bill_date >= start_date)
     if end_date: query = query.filter(Bill.bill_date <= end_date)
