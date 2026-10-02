@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   FileText, Plus, Search, Calendar, Trash2, Eye,
-  X, Wallet, CheckCircle2, Clock, AlertCircle, CreditCard, QrCode, Banknote,
-  FileDown, Share2, Send, Phone, MessageSquare
+  X, Wallet, CheckCircle2, Clock, AlertCircle, QrCode, Banknote,
+  FileDown, Send, Pencil, PenSquare
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../lib/api";
@@ -21,8 +21,10 @@ export default function BillsPage() {
   // Modals
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [isEditBillModalOpen, setIsEditBillModalOpen] = useState(false);
   const [viewingBill, setViewingBill] = useState(null);
   const [sendingBillId, setSendingBillId] = useState(null);
+  const [editingBill, setEditingBill] = useState(null);
 
   // Payment Modal state
   const [paymentBill, setPaymentBill] = useState(null);
@@ -38,6 +40,14 @@ export default function BillsPage() {
     customer_id: "",
     bill_date: new Date().toISOString().split("T")[0],
     amount_paid: "",
+    payment_method: "Cash",
+  });
+
+  // Edit Bill Form
+  const [editProductRows, setEditProductRows] = useState([]);
+  const [editBillMeta, setEditBillMeta] = useState({
+    customer_id: "",
+    bill_date: new Date().toISOString().split("T")[0],
     payment_method: "Cash",
   });
   const [ratesLoading, setRatesLoading] = useState(false);
@@ -90,6 +100,21 @@ export default function BillsPage() {
     },
   });
 
+  // Update Bill Mutation
+  const updateBillMutation = useMutation({
+    mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries(["bills"]);
+      queryClient.invalidateQueries(["dashboard-stats"]);
+      toast.success("Bill updated successfully!");
+      setIsEditBillModalOpen(false);
+      setEditingBill(null);
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.detail || "Failed to update bill");
+    },
+  });
+
   // Payment Record Mutation
   const paymentMutation = useMutation({
     mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}/payment`, payload),
@@ -139,7 +164,7 @@ export default function BillsPage() {
       }
       toast.success(`Invoice #${bill.bill_no} dispatched!`, { id: `wa-toast-${bill.id}` });
     } catch (e) {
-      const msg = `🧾 *INVOICE: #${bill.bill_no}*\n👤 *Customer:* ${bill.customer_name}\n📅 *Date:* ${bill.bill_date}\n💰 *Total:* ₹${bill.total_amount}\n✅ *Paid:* ₹${bill.amount_paid}\n⏳ *Balance:* ₹${bill.balance_due}\n\nThank you for your business!`;
+      const msg = `🧾 *INVOICE: #${bill.bill_no}*\n👤 *Customer:* ${bill.customer_name}\n📅 *Date:* ${bill.bill_date}\n💰 *Total:* ₹${bill.total_amount}\n✅ *Paid:* ₹${bill.amount_paid}\n⏳ *Balance:* ₹${bill.balance_due}`;
       const cleanPhone = (bill.customer_phone || "").replace(/[^0-9]/g, "");
       const waUrl = cleanPhone ? `https://wa.me/${cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
       window.open(waUrl, "_blank");
@@ -176,6 +201,29 @@ export default function BillsPage() {
     setIsManualModalOpen(true);
   };
 
+  const openEditBillModal = (bill) => {
+    setEditingBill(bill);
+    setEditBillMeta({
+      customer_id: String(bill.customer_id ?? ""),
+      bill_date: bill.bill_date || new Date().toISOString().split("T")[0],
+      payment_method: bill.payment_method || "Cash",
+    });
+    setEditProductRows(
+      (bill.items || []).map((item) => ({
+        product_id: item.product_id ?? "",
+        name: item.product_name || "Custom Item",
+        unit: item.unit || "kg",
+        rate: String(item.rate ?? 0),
+        quantity: String(item.quantity ?? 0),
+        tag: item.tag || null,
+        circled_value: item.circled_value || null,
+        confidence: item.confidence ?? 1,
+        raw_text: item.raw_text || null,
+      }))
+    );
+    setIsEditBillModalOpen(true);
+  };
+
   const handleCustomerChange = async (newCustomerId) => {
     setBillMeta((m) => ({ ...m, customer_id: newCustomerId }));
     if (!newCustomerId || products.length === 0) return;
@@ -203,8 +251,36 @@ export default function BillsPage() {
     });
   };
 
+  const handleEditBillSubmit = (e) => {
+    e.preventDefault();
+    if (!editingBill) return;
+    if (!editBillMeta.customer_id) { toast.error("Please select a customer"); return; }
+    const validItems = editProductRows.filter((row) => parseFloat(row.quantity) > 0);
+    if (validItems.length === 0) { toast.error("Enter quantity for at least one product"); return; }
+
+    updateBillMutation.mutate({
+      billId: editingBill.id,
+      payload: {
+        customer_id: parseInt(editBillMeta.customer_id),
+        bill_date: editBillMeta.bill_date,
+        payment_method: editBillMeta.payment_method || "Cash",
+        items: validItems.map((row) => ({
+          product_id: row.product_id ? Number(row.product_id) : null,
+          quantity: parseFloat(row.quantity),
+          rate: parseFloat(row.rate || 0),
+          amount: parseFloat(row.quantity) * parseFloat(row.rate || 0),
+          tag: row.tag || null,
+          circled_value: row.circled_value || null,
+          confidence: row.confidence ?? 1.0,
+          raw_text: row.raw_text || null,
+        })),
+      },
+    });
+  };
+
   const billTotal = productRows.reduce((s, r) => s + (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0), 0);
   const billBalance = Math.max(0, billTotal - (parseFloat(billMeta.amount_paid) || 0));
+  const editBillTotal = editProductRows.reduce((s, r) => s + (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0), 0);
 
   const handlePaymentSubmit = (e) => {
     e.preventDefault();
@@ -390,7 +466,6 @@ export default function BillsPage() {
                 {filteredBills.map((b) => {
                   const isPaid = b.payment_status === "paid";
                   const isPartial = b.payment_status === "partial";
-                  const isUnpaid = b.payment_status === "unpaid";
 
                   return (
                     <tr key={b.id} className="hover:bg-zinc-800/30 transition-colors">
@@ -448,6 +523,13 @@ export default function BillsPage() {
                             </button>
                           )}
                           <button
+                            onClick={() => openEditBillModal(b)}
+                            className="p-1.5 text-zinc-400 hover:text-amber-400 hover:bg-zinc-800 rounded-lg transition-colors"
+                            title="Edit Bill"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
                             onClick={() => downloadBillPdf(b)}
                             className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 rounded-lg transition-colors"
                             title="Download PDF Invoice"
@@ -487,7 +569,6 @@ export default function BillsPage() {
       {isWhatsAppModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[92vh]">
-            {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-emerald-600/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
@@ -506,7 +587,6 @@ export default function BillsPage() {
               </button>
             </div>
 
-            {/* Modal Body */}
             <div className="p-5 flex-1 overflow-y-auto flex flex-col gap-4">
               <div className="border border-zinc-800 rounded-xl overflow-hidden bg-zinc-950/60">
                 <div className="px-3.5 py-2.5 bg-zinc-900/60 border-b border-zinc-800 flex items-center justify-between text-xs text-zinc-400 font-semibold uppercase">
@@ -561,7 +641,6 @@ export default function BillsPage() {
               </div>
             </div>
 
-            {/* Footer */}
             <div className="px-5 py-4 border-t border-zinc-800 shrink-0 bg-zinc-900/90 flex items-center justify-between">
               <span className="text-xs text-zinc-400">
                 Sends complete itemized bill and generated PDF invoice to customer
@@ -750,7 +829,6 @@ export default function BillsPage() {
                 </div>
               </div>
 
-              {/* Items Table */}
               <div className="border border-zinc-800 rounded-xl overflow-hidden">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-zinc-950 text-zinc-400 font-semibold border-b border-zinc-800 uppercase">
@@ -774,7 +852,6 @@ export default function BillsPage() {
                 </table>
               </div>
 
-              {/* Payment Installment History */}
               {viewingBill.payment_history?.length > 0 && (
                 <div className="flex flex-col gap-2">
                   <h4 className="text-xs font-bold text-zinc-400 uppercase">Payment Collection History</h4>
@@ -853,7 +930,6 @@ export default function BillsPage() {
                   </div>
                 </div>
 
-                {/* Product Entry */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-xs font-semibold text-zinc-400 uppercase">
@@ -922,7 +998,6 @@ export default function BillsPage() {
                   </div>
                 </div>
 
-                {/* Bill Summary & Payment Details */}
                 <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 flex flex-col gap-3">
                   <div className="flex justify-between items-center text-sm font-bold">
                     <span className="text-zinc-300">Total Amount:</span>
@@ -967,7 +1042,6 @@ export default function BillsPage() {
                 </div>
               </div>
 
-              {/* Footer */}
               <div className="p-4 sm:p-5 border-t border-zinc-800 bg-zinc-900/90 flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -982,6 +1056,214 @@ export default function BillsPage() {
                   className="btn-primary text-xs sm:text-sm px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40"
                 >
                   {createMutation.isLoading ? "Saving..." : "Save Bill"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Bill Modal */}
+      {isEditBillModalOpen && editingBill && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-in fade-in">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[90vh]">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-zinc-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-600/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                  <PenSquare className="w-5 h-5" />
+                </div>
+                <h3 className="text-base sm:text-lg font-bold text-zinc-100">Edit Bill #{editingBill.bill_no}</h3>
+              </div>
+              <button
+                onClick={() => setIsEditBillModalOpen(false)}
+                className="text-zinc-400 hover:text-zinc-100 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditBillSubmit} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-4 sm:p-5 flex-1 overflow-y-auto flex flex-col gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase mb-1">
+                      Customer *
+                    </label>
+                    <select
+                      required
+                      value={editBillMeta.customer_id}
+                      onChange={(e) => setEditBillMeta({ ...editBillMeta, customer_id: e.target.value })}
+                      className="input-field text-xs sm:text-sm w-full"
+                    >
+                      <option value="">Select Customer...</option>
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase mb-1">
+                      Bill Date *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={editBillMeta.bill_date}
+                      onChange={(e) => setEditBillMeta({ ...editBillMeta, bill_date: e.target.value })}
+                      className="input-field text-xs sm:text-sm w-full"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-zinc-400 uppercase">
+                      Edit Items
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const fallbackProduct = products[0];
+                        setEditProductRows((prev) => [
+                          ...prev,
+                          {
+                            product_id: fallbackProduct?.id ?? "",
+                            name: fallbackProduct?.name || "Custom Item",
+                            unit: fallbackProduct?.unit || "kg",
+                            rate: String(fallbackProduct?.rate ?? 0),
+                            quantity: "0",
+                            tag: null,
+                            circled_value: null,
+                            confidence: 1,
+                            raw_text: null,
+                          },
+                        ]);
+                      }}
+                      className="btn-secondary text-[11px] px-2 py-1 text-amber-400 border-amber-500/30 hover:bg-amber-950/30"
+                    >
+                      + Add Item
+                    </button>
+                  </div>
+
+                  <div className="border border-zinc-800 rounded-xl overflow-x-auto">
+                    <table className="w-full text-left text-xs min-w-[500px]">
+                      <thead className="bg-zinc-950 text-zinc-400 font-semibold border-b border-zinc-800">
+                        <tr>
+                          <th className="p-2.5">Product</th>
+                          <th className="p-2.5 text-right w-24">Rate (₹)</th>
+                          <th className="p-2.5 text-right w-28">Quantity</th>
+                          <th className="p-2.5 text-right w-24">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800/60">
+                        {editProductRows.map((row, idx) => {
+                          const amt = (parseFloat(row.quantity) || 0) * (parseFloat(row.rate) || 0);
+                          return (
+                            <tr key={`${row.product_id || "custom"}-${idx}`} className="hover:bg-zinc-800/20">
+                              <td className="p-2.5 font-medium text-zinc-200">
+                                <select
+                                  value={row.product_id}
+                                  onChange={(e) => {
+                                    const selected = products.find((p) => String(p.id) === e.target.value);
+                                    setEditProductRows((prev) => prev.map((item, i) =>
+                                      i === idx
+                                        ? {
+                                            ...item,
+                                            product_id: selected ? selected.id : "",
+                                            name: selected ? selected.name : item.name,
+                                            unit: selected ? selected.unit : item.unit,
+                                            rate: String(item.rate || 0),
+                                          }
+                                        : item
+                                    ));
+                                  }}
+                                  className="input-field text-xs w-full"
+                                >
+                                  <option value="">Custom Item</option>
+                                  {products.map((p) => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="p-2.5 text-right">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={row.rate}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setEditProductRows((prev) =>
+                                      prev.map((r, i) => (i === idx ? { ...r, rate: val } : r))
+                                    );
+                                  }}
+                                  className="input-field text-xs text-right py-1 px-2 w-20"
+                                />
+                              </td>
+                              <td className="p-2.5 text-right">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  placeholder="0"
+                                  value={row.quantity}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setEditProductRows((prev) =>
+                                      prev.map((r, i) => (i === idx ? { ...r, quantity: val } : r))
+                                    );
+                                  }}
+                                  className="input-field text-xs text-right py-1 px-2 w-20 font-bold"
+                                />
+                              </td>
+                              <td className="p-2.5 text-right font-mono font-semibold text-zinc-100">
+                                {amt > 0 ? formatCurrency(amt) : "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 flex flex-col gap-3">
+                  <div className="flex justify-between items-center text-sm font-bold">
+                    <span className="text-zinc-300">Total Amount:</span>
+                    <span className="font-mono text-amber-400 text-base">{formatCurrency(editBillTotal)}</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-zinc-800 text-xs">
+                    <div>
+                      <label className="block font-semibold text-zinc-400 uppercase mb-1">
+                        Payment Method
+                      </label>
+                      <select
+                        value={editBillMeta.payment_method}
+                        onChange={(e) => setEditBillMeta({ ...editBillMeta, payment_method: e.target.value })}
+                        className="input-field text-xs w-full"
+                      >
+                        <option value="Cash">Cash</option>
+                        <option value="UPI">UPI</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 sm:p-5 border-t border-zinc-800 bg-zinc-900/90 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditBillModalOpen(false)}
+                  className="btn-secondary text-xs sm:text-sm px-4 py-2"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updateBillMutation.isLoading || editBillTotal === 0}
+                  className="btn-primary text-xs sm:text-sm px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-40"
+                >
+                  {updateBillMutation.isLoading ? "Updating..." : "Save Changes"}
                 </button>
               </div>
             </form>
