@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.models import Bill, BillItem, Customer, Product, User, PaymentInstallment
-from app.schemas.schemas import BillCreate, BillOut, BillItemOut, BillPaymentUpdate, PaymentInstallmentOut, BulkWhatsAppRequest
+from app.schemas.schemas import BillCreate, BillUpdate, BillOut, BillItemOut, BillPaymentUpdate, PaymentInstallmentOut, BulkWhatsAppRequest
 from app.services.pdf_service import generate_bill_pdf
 from app.services.whatsapp_service import send_whatsapp_direct, clean_phone_number, check_openwa_status
 from app.services.cloudinary_service import upload_image_to_cloudinary
@@ -105,6 +105,67 @@ def create_manual_bill(data: BillCreate, db: Session = Depends(get_db), current_
 def get_bill(bill_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     bill = db.query(Bill).filter(Bill.id == bill_id).first()
     if not bill: raise HTTPException(status_code=404, detail="Bill not found")
+    return _format_bill_out(bill, db)
+
+@router.put("/{bill_id}", response_model=BillOut)
+def edit_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Edit a bill's customer, date, items, and payment method"""
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill: raise HTTPException(status_code=404, detail="Bill not found")
+    
+    # Update customer if provided
+    if data.customer_id is not None:
+        cust = db.query(Customer).filter(Customer.id == data.customer_id).first()
+        if not cust: raise HTTPException(status_code=404, detail="Customer not found")
+        bill.customer_id = data.customer_id
+    
+    # Update bill date if provided
+    if data.bill_date is not None:
+        bill.bill_date = data.bill_date
+    
+    # Update payment method if provided
+    if data.payment_method is not None:
+        bill.payment_method = data.payment_method
+    
+    # Update items if provided
+    if data.items is not None:
+        # Delete old items
+        db.query(BillItem).filter(BillItem.bill_id == bill_id).delete()
+        
+        # Calculate new total
+        new_total = sum((item.quantity * item.rate) for item in data.items)
+        
+        # Recalculate payment status
+        current_paid = float(bill.amount_paid or 0)
+        if current_paid > new_total:
+            current_paid = new_total
+        
+        new_bal = max(0.0, new_total - current_paid)
+        
+        if current_paid >= new_total and new_total > 0:
+            p_status = "paid"
+        elif current_paid > 0:
+            p_status = "partial"
+        else:
+            p_status = "unpaid"
+        
+        # Update bill totals
+        bill.total_amount = new_total
+        bill.amount_paid = current_paid
+        bill.balance_due = new_bal
+        bill.payment_status = p_status
+        
+        # Add new items
+        for item in data.items:
+            line_total = item.amount if item.amount is not None else (item.quantity * item.rate)
+            db.add(BillItem(
+                bill_id=bill.id, product_id=item.product_id, quantity=item.quantity,
+                rate=item.rate, amount=line_total, tag=item.tag, circled_value=item.circled_value,
+                confidence=item.confidence or 1.0, raw_text=item.raw_text
+            ))
+    
+    db.commit()
+    db.refresh(bill)
     return _format_bill_out(bill, db)
 
 @router.put("/{bill_id}/payment", response_model=BillOut)
@@ -425,4 +486,3 @@ def bulk_send_whatsapp(payload: BulkWhatsAppRequest, db: Session = Depends(get_d
         "delay_seconds": payload.delay_seconds,
         "details": results
     }
-
