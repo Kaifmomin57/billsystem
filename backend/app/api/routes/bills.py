@@ -13,6 +13,24 @@ from app.services.cloudinary_service import upload_image_to_cloudinary
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 
+def _get_previous_unpaid_bills(bill, db):
+    """Returns list of other unpaid/partial bills for the same customer, ordered by date, excluding current bill."""
+    if not bill.customer_id:
+        return []
+    prev_bills = (
+        db.query(Bill)
+        .filter(
+            Bill.customer_id == bill.customer_id,
+            Bill.id != bill.id,
+            Bill.payment_status.in_(["unpaid", "partial"]),
+            Bill.balance_due > 0,
+            Bill.source != "ledger_ai",
+        )
+        .order_by(Bill.bill_date.asc(), Bill.id.asc())
+        .all()
+    )
+    return prev_bills
+
 def _format_bill_out(bill, db):
     items_out = []
     for item in bill.items:
@@ -37,6 +55,10 @@ def _format_bill_out(bill, db):
             id=inst.id, bill_id=inst.bill_id, amount=float(inst.amount),
             payment_method=inst.payment_method, note=inst.note, paid_at=inst.paid_at
         ))
+    # Carry forward: sum balance from older unpaid bills
+    prev_bills_db = _get_previous_unpaid_bills(bill, db)
+    prev_balance = sum(float(pb.balance_due or 0) for pb in prev_bills_db)
+    total_due_cf = bal + prev_balance
     return BillOut(
         id=bill.id, customer_id=bill.customer_id,
         customer_name=cust.name if cust else None,
@@ -44,6 +66,8 @@ def _format_bill_out(bill, db):
         customer_address=cust.address if cust else None,
         bill_no=bill.bill_no, bill_date=bill.bill_date,
         total_amount=tot, amount_paid=paid, balance_due=bal,
+        previous_balance=prev_balance,
+        total_due_with_carry_forward=total_due_cf,
         payment_status=p_status, payment_method=bill.payment_method or "Cash",
         source=bill.source, upload_id=bill.upload_id, image_path=bill.image_path,
         status=bill.status, created_at=bill.created_at,
@@ -159,6 +183,7 @@ def get_bill_pdf(bill_id: int, db: Session = Depends(get_db)):
     formatted = _format_bill_out(bill, db)
     
     # Prepare bill data dictionary for PDF generator
+    prev_bills_db = _get_previous_unpaid_bills(bill, db)
     bill_dict = {
         "bill_no": formatted.bill_no,
         "bill_date": formatted.bill_date,
@@ -170,6 +195,18 @@ def get_bill_pdf(bill_id: int, db: Session = Depends(get_db)):
         "total_amount": formatted.total_amount,
         "amount_paid": formatted.amount_paid,
         "balance_due": formatted.balance_due,
+        "previous_balance": formatted.previous_balance,
+        "total_due_with_carry_forward": formatted.total_due_with_carry_forward,
+        "previous_bills": [
+            {
+                "bill_no": pb.bill_no,
+                "bill_date": pb.bill_date,
+                "total_amount": float(pb.total_amount or 0),
+                "amount_paid": float(pb.amount_paid or 0),
+                "balance_due": float(pb.balance_due or 0),
+            }
+            for pb in prev_bills_db
+        ],
         "items": [
             {
                 "name": item.product_name or "Custom Item",
@@ -232,9 +269,16 @@ def get_whatsapp_share_link(bill_id: int, db: Session = Depends(get_db)):
     
     lines.extend([
         "────────────────────",
-        f"💰 *Total Amount:* ₹{formatted.total_amount:.2f}",
+        f"💰 *Current Bill Total:* ₹{formatted.total_amount:.2f}",
         f"💳 *Amount Paid ({formatted.payment_method}):* ₹{formatted.amount_paid:.2f}",
-        f"⏳ *Balance Due:* ₹{formatted.balance_due:.2f}",
+        f"⏳ *Current Balance Due:* ₹{formatted.balance_due:.2f}",
+    ])
+    if formatted.previous_balance > 0.009:
+        lines.extend([
+            f"🔴 *Previous Pending (C/F):* ₹{formatted.previous_balance:.2f}",
+            f"🔥 *TOTAL OUTSTANDING:* ₹{formatted.total_due_with_carry_forward:.2f}",
+        ])
+    lines.extend([
         f"📌 *Payment Status:* {status_emoji}",
         "",
         "🙏 _Thank you for your business!_",
@@ -257,6 +301,7 @@ def _build_bill_whatsapp_payload(bill, db):
     cust_phone = (formatted.customer_phone or "").strip()
     cleaned_phone = clean_phone_number(cust_phone)
     
+    prev_bills_db_wa = _get_previous_unpaid_bills(bill, db)
     bill_dict = {
         "bill_no": formatted.bill_no,
         "bill_date": formatted.bill_date,
@@ -268,6 +313,18 @@ def _build_bill_whatsapp_payload(bill, db):
         "total_amount": formatted.total_amount,
         "amount_paid": formatted.amount_paid,
         "balance_due": formatted.balance_due,
+        "previous_balance": formatted.previous_balance,
+        "total_due_with_carry_forward": formatted.total_due_with_carry_forward,
+        "previous_bills": [
+            {
+                "bill_no": pb.bill_no,
+                "bill_date": pb.bill_date,
+                "total_amount": float(pb.total_amount or 0),
+                "amount_paid": float(pb.amount_paid or 0),
+                "balance_due": float(pb.balance_due or 0),
+            }
+            for pb in prev_bills_db_wa
+        ],
         "items": [
             {
                 "name": item.product_name or "Custom Item",
@@ -302,9 +359,16 @@ def _build_bill_whatsapp_payload(bill, db):
     
     lines.extend([
         "────────────────────",
-        f"💰 *Total Amount:* ₹{formatted.total_amount:.2f}",
+        f"💰 *Current Bill Total:* ₹{formatted.total_amount:.2f}",
         f"💳 *Amount Paid ({formatted.payment_method}):* ₹{formatted.amount_paid:.2f}",
-        f"⏳ *Balance Due:* ₹{formatted.balance_due:.2f}",
+        f"⏳ *Current Balance Due:* ₹{formatted.balance_due:.2f}",
+    ])
+    if formatted.previous_balance > 0.009:
+        lines.extend([
+            f"🔴 *Previous Pending (C/F):* ₹{formatted.previous_balance:.2f}",
+            f"🔥 *TOTAL OUTSTANDING:* ₹{formatted.total_due_with_carry_forward:.2f}",
+        ])
+    lines.extend([
         f"📌 *Payment Status:* {status_emoji}",
         "",
         "🙏 _Thank you for your business!_",

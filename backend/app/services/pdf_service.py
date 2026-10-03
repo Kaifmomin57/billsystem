@@ -136,9 +136,17 @@ def generate_bill_pdf(bill_data: dict) -> bytes:
     bill_no = bill_data.get("bill_no", "N/A")
     bill_date = bill_data.get("bill_date", "")
     p_status = bill_data.get("payment_status", "unpaid").upper()
+    tot = float(bill_data.get("total_amount", 0))
+    paid = float(bill_data.get("amount_paid", 0))
+    bal = float(bill_data.get("balance_due", max(0.0, tot - paid)))
+    prev_bal = float(bill_data.get("previous_balance", 0.0))
+    total_net_due = float(bill_data.get("total_due_with_carry_forward", bal + prev_bal))
     
-    status_color = "#059669" if p_status == "PAID" else ("#D97706" if p_status == "PARTIAL" else "#DC2626")
-    status_text = f"<font color='{status_color}'><b>● {p_status}</b></font>"
+    if prev_bal > 0.009 and p_status == "PAID":
+        status_text = f"<font color='#059669'><b>● BILL PAID</b></font> <font color='#DC2626'><b>(PREV DUE: Rs. {prev_bal:.2f})</b></font>"
+    else:
+        status_color = "#059669" if p_status == "PAID" else ("#D97706" if p_status == "PARTIAL" else "#DC2626")
+        status_text = f"<font color='{status_color}'><b>● {p_status}</b></font>"
 
     header_table_data = [
         [
@@ -172,6 +180,21 @@ def generate_bill_pdf(bill_data: dict) -> bytes:
     if cust_addr:
         cust_lines.append(f"Address: {cust_addr}")
 
+    if prev_bal > 0.009:
+        pay_summary_lines = (
+            f"Payment Mode: <b>{bill_data.get('payment_method', 'Cash')}</b><br/>"
+            f"Current Bill: <b>Rs. {tot:.2f}</b> (Paid: <b>Rs. {paid:.2f}</b>)<br/>"
+            f"Prev. Balance (C/F): <font color='#DC2626'><b>Rs. {prev_bal:.2f}</b></font><br/>"
+            f"Total Outstanding: <font color='#DC2626'><b>Rs. {total_net_due:.2f}</b></font>"
+        )
+    else:
+        pay_summary_lines = (
+            f"Payment Mode: <b>{bill_data.get('payment_method', 'Cash')}</b><br/>"
+            f"Total: <b>Rs. {tot:.2f}</b><br/>"
+            f"Paid: <b>Rs. {paid:.2f}</b><br/>"
+            f"Balance: <b>Rs. {bal:.2f}</b>"
+        )
+
     billed_to_data = [
         [
             Paragraph("<b>BILLED TO:</b>", section_heading),
@@ -179,7 +202,7 @@ def generate_bill_pdf(bill_data: dict) -> bytes:
         ],
         [
             Paragraph("<br/>".join(cust_lines), cust_info_style),
-            Paragraph(f"Payment Mode: <b>{bill_data.get('payment_method', 'Cash')}</b><br/>Total: <b>Rs. {float(bill_data.get('total_amount', 0)):.2f}</b><br/>Paid: <b>Rs. {float(bill_data.get('amount_paid', 0)):.2f}</b>", cust_info_style)
+            Paragraph(pay_summary_lines, cust_info_style)
         ]
     ]
     cust_table = Table(billed_to_data, colWidths=[260, 260])
@@ -244,29 +267,46 @@ def generate_bill_pdf(bill_data: dict) -> bytes:
     story.append(Spacer(1, 14))
 
     # 4. Financial Total Summary Box (aligned right)
-    tot = float(bill_data.get("total_amount", 0))
-    paid = float(bill_data.get("amount_paid", 0))
-    bal = float(bill_data.get("balance_due", max(0.0, tot - paid)))
+    summary_box_style_red = ParagraphStyle('BalDueRed', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.HexColor("#DC2626"))
+    summary_box_style_red_val = ParagraphStyle('BalDueRedVal', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, alignment=2, textColor=colors.HexColor("#DC2626"))
+    tot_due_color = "#DC2626" if total_net_due > 0 else "#059669"
+    tot_due_style = ParagraphStyle('TotDueStyle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor(tot_due_color))
+    tot_due_val_style = ParagraphStyle('TotDueValStyle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, alignment=2, textColor=colors.HexColor(tot_due_color))
 
-    summary_data = [
-        [Paragraph("<b>Subtotal / Total Bill:</b>", table_cell_style), Paragraph(f"<b>Rs. {tot:.2f}</b>", table_cell_bold_right)],
-        [Paragraph(f"Amount Paid ({bill_data.get('payment_method', 'Cash')}):", table_cell_style), Paragraph(f"Rs. {paid:.2f}", table_cell_right)],
-        [
-            Paragraph("<b>Balance Due:</b>", ParagraphStyle('BalDue', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor("#DC2626" if bal > 0 else "#059669"))),
-            Paragraph(f"<b>Rs. {bal:.2f}</b>", ParagraphStyle('BalDueVal', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, alignment=2, textColor=colors.HexColor("#DC2626" if bal > 0 else "#059669")))
-        ],
-    ]
-    summary_table = Table(summary_data, colWidths=[150, 110])
-    summary_table.setStyle(TableStyle([
+    summary_t_style = [
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('TOPPADDING', (0,0), (-1,-1), 4),
         ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-        ('LINEABOVE', (0,2), (-1,2), 1, colors.HexColor("#D1D5DB")),
         ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F3F4F6")),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor("#E5E7EB")),
         ('LEFTPADDING', (0,0), (-1,-1), 8),
         ('RIGHTPADDING', (0,0), (-1,-1), 8),
-    ]))
+    ]
+
+    if prev_bal > 0.009:
+        summary_data = [
+            [Paragraph("<b>Current Bill Total:</b>", table_cell_style), Paragraph(f"<b>Rs. {tot:.2f}</b>", table_cell_bold_right)],
+            [Paragraph(f"Amount Paid ({bill_data.get('payment_method', 'Cash')}):", table_cell_style), Paragraph(f"Rs. {paid:.2f}", table_cell_right)],
+            [Paragraph("Current Bill Balance:", table_cell_style), Paragraph(f"Rs. {bal:.2f}", table_cell_bold_right)],
+            [Paragraph("<b>Previous Balance (C/F):</b>", summary_box_style_red), Paragraph(f"<b>+ Rs. {prev_bal:.2f}</b>", summary_box_style_red_val)],
+            [Paragraph("<b>Total Amount Due:</b>", tot_due_style), Paragraph(f"<b>Rs. {total_net_due:.2f}</b>", tot_due_val_style)],
+        ]
+        summary_t_style.append(('LINEABOVE', (0, 3), (-1, 3), 0.5, colors.HexColor("#D1D5DB")))
+        summary_t_style.append(('LINEABOVE', (0, 4), (-1, 4), 1.2, colors.HexColor("#9CA3AF")))
+        summary_t_style.append(('BACKGROUND', (0, 4), (-1, 4), colors.HexColor("#FEE2E2") if total_net_due > 0 else colors.HexColor("#D1FAE5")))
+    else:
+        bal_color = "#DC2626" if bal > 0 else "#059669"
+        bal_style = ParagraphStyle('BalDueSimple', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor(bal_color))
+        bal_val_style = ParagraphStyle('BalDueValSimple', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, alignment=2, textColor=colors.HexColor(bal_color))
+        summary_data = [
+            [Paragraph("<b>Subtotal / Total Bill:</b>", table_cell_style), Paragraph(f"<b>Rs. {tot:.2f}</b>", table_cell_bold_right)],
+            [Paragraph(f"Amount Paid ({bill_data.get('payment_method', 'Cash')}):", table_cell_style), Paragraph(f"Rs. {paid:.2f}", table_cell_right)],
+            [Paragraph("<b>Balance Due:</b>", bal_style), Paragraph(f"<b>Rs. {bal:.2f}</b>", bal_val_style)],
+        ]
+        summary_t_style.append(('LINEABOVE', (0, 2), (-1, 2), 1, colors.HexColor("#D1D5DB")))
+
+    summary_table = Table(summary_data, colWidths=[160, 100])
+    summary_table.setStyle(TableStyle(summary_t_style))
 
     # Wrap summary in outer table to push to right
     outer_summary = Table([["", summary_table]], colWidths=[260, 260])
@@ -277,6 +317,49 @@ def generate_bill_pdf(bill_data: dict) -> bytes:
     ]))
     story.append(outer_summary)
     story.append(Spacer(1, 14))
+
+    # 4b. Previous Unpaid Bills Breakdown Table (if carry forward exists)
+    previous_bills = bill_data.get("previous_bills", [])
+    if prev_bal > 0.009 and len(previous_bills) > 0:
+        story.append(Paragraph("<b>Previous Unpaid Bills (Carried Forward Details):</b>", section_heading))
+        story.append(Spacer(1, 4))
+        prev_table_hdr_red = ParagraphStyle('PrevHdrRed', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, alignment=2, textColor=colors.HexColor("#DC2626"))
+        prev_cell_red = ParagraphStyle('PrevCellRed', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8, alignment=2, textColor=colors.HexColor("#DC2626"))
+        prev_cell_style = ParagraphStyle('PrevCell', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor("#1F2937"))
+        prev_cell_right = ParagraphStyle('PrevCellR', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, alignment=2, textColor=colors.HexColor("#1F2937"))
+
+        prev_table_data = [
+            [
+                Paragraph("<b>#</b>", prev_cell_style),
+                Paragraph("<b>Invoice No</b>", prev_cell_style),
+                Paragraph("<b>Date</b>", prev_cell_style),
+                Paragraph("<b>Bill Total</b>", prev_cell_right),
+                Paragraph("<b>Amount Paid</b>", prev_cell_right),
+                Paragraph("<b>Pending Due</b>", prev_table_hdr_red),
+            ]
+        ]
+        for p_idx, pb in enumerate(previous_bills, 1):
+            prev_table_data.append([
+                Paragraph(str(p_idx), prev_cell_style),
+                Paragraph(str(pb.get("bill_no") or "N/A"), prev_cell_style),
+                Paragraph(str(pb.get("bill_date") or ""), prev_cell_style),
+                Paragraph(f"Rs. {float(pb.get('total_amount', 0)):.2f}", prev_cell_right),
+                Paragraph(f"Rs. {float(pb.get('amount_paid', 0)):.2f}", prev_cell_right),
+                Paragraph(f"Rs. {float(pb.get('balance_due', 0)):.2f}", prev_cell_red),
+            ])
+
+        prev_table = Table(prev_table_data, colWidths=[25, 175, 80, 80, 80, 80])
+        prev_table.setStyle(TableStyle([
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E5E7EB")),
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#FEE2E2")),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('LEFTPADDING', (0,0), (-1,-1), 5),
+            ('RIGHTPADDING', (0,0), (-1,-1), 5),
+        ]))
+        story.append(prev_table)
+        story.append(Spacer(1, 14))
 
     # 5. Payment Installment History (if any)
     installments = bill_data.get("payment_history", [])

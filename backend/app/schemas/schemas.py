@@ -175,6 +175,8 @@ class BillOut(BaseModel):
     total_amount: float
     amount_paid: float = 0.0
     balance_due: float = 0.0
+    previous_balance: float = 0.0
+    total_due_with_carry_forward: float = 0.0
     payment_status: str = "unpaid"
     payment_method: str = "Cash"
     source: str
