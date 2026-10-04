@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api, { API_BASE_URL } from "../lib/api";
+import { downloadBlob } from "../lib/utils";
 
 export default function UploadPage() {
   const queryClient = useQueryClient();
@@ -161,27 +162,51 @@ export default function UploadPage() {
 
   // Download Excel
   const handleDownloadExcel = async (targetUploadId) => {
-    const id = targetUploadId || activeUploadId;
-    if (!id) return toast.error("No active upload selected to download");
+    const id = (typeof targetUploadId === "number" || typeof targetUploadId === "string")
+      ? targetUploadId
+      : activeUploadId;
+
+    if (!id) {
+      return toast.error("No active upload selected to download. Please select or upload a bill first.");
+    }
+
     try {
       toast.loading("Preparing Excel file...", { id: "excel-toast" });
+
+      // If downloading the currently active draft, auto-save any changes first
+      if (id === activeUploadId && activeDraft) {
+        try {
+          await api.put(`/uploads/${id}/draft`, {
+            page_date: activeDate,
+            draft_data: activeDraft,
+          });
+        } catch (_) {
+          // Non-blocking: continue downloading even if draft sync had a warning
+        }
+      }
+
       const res = await api.get(`/uploads/${id}/excel`, {
         responseType: "blob",
       });
+
       const blob = new Blob([res.data], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `digitized_ledger_${activeDate || id}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      const filename = `digitized_ledger_${activeDate || id}.xlsx`;
+      downloadBlob(blob, filename);
       toast.success("Excel spreadsheet downloaded!", { id: "excel-toast" });
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to download Excel file", { id: "excel-toast" });
+      let errorMsg = "Failed to download Excel file";
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const json = JSON.parse(text);
+          if (json.detail) errorMsg = json.detail;
+        } catch (_) {}
+      } else if (err.response?.data?.detail) {
+        errorMsg = err.response.data.detail;
+      }
+      toast.error(errorMsg, { id: "excel-toast" });
     }
   };
 
@@ -350,7 +375,7 @@ export default function UploadPage() {
               </div>
 
               <button
-                onClick={handleDownloadExcel}
+                onClick={() => handleDownloadExcel()}
                 className="btn-secondary text-xs flex items-center gap-1.5 py-2"
                 title="Download 3-Sheet Excel (Ledger Grid, Flat Entries, Needs Review)"
               >

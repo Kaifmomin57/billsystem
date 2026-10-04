@@ -516,45 +516,95 @@ def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.By
     """Generate multi-sheet Excel for a digitized ledger page (F4.14)."""
     wb = Workbook()
 
+    if not isinstance(draft_data, dict):
+        draft_data = {}
+
+    col_codes = draft_data.get("column_codes")
+    if not col_codes or not isinstance(col_codes, list):
+        col_codes = ["M", "R", "B", "P", "K", "T", "JB"]
+
+    rows = draft_data.get("rows", [])
+    if not isinstance(rows, list):
+        rows = []
+
     # Sheet 1: Ledger Matrix
     ws1 = wb.active
     ws1.title = "Ledger Grid"
 
-    ws1.merge_cells("A1:I1")
+    max_col_letter = get_column_letter(max(len(col_codes) + 3, 6))
+    ws1.merge_cells(f"A1:{max_col_letter}1")
     t1 = ws1["A1"]
     t1.value = f"DIGITIZED LEDGER GRID — {page_date or 'UNDATED'}"
     t1.font = HEADER_FONT; t1.fill = HEADER_FILL; t1.alignment = Alignment(horizontal="center", vertical="center")
     ws1.row_dimensions[1].height = 28
 
-    col_codes = draft_data.get("column_codes", ["M", "R", "B", "P", "K", "T", "JB"])
     headers = ["#", "Customer Name"] + col_codes + ["Notes / Tags"]
     for ci, h in enumerate(headers, 1):
         cell = ws1.cell(row=2, column=ci, value=h)
         cell.font = SUBHDR_FONT; cell.fill = SUBHDR_FILL; cell.alignment = Alignment(horizontal="center"); cell.border = CELL_BORDER
+    ws1.row_dimensions[2].height = 22
 
-    rows = draft_data.get("rows", [])
+    needs_review_items = []
+
     for ri, row in enumerate(rows, start=3):
+        if not isinstance(row, dict):
+            continue
         fill = EVEN_FILL if ri % 2 == 0 else ODD_FILL
+        c_name = row.get("customer_name_raw") or row.get("customer_name") or ""
         ws1.cell(row=ri, column=1, value=ri-2).fill = fill
-        ws1.cell(row=ri, column=2, value=row.get("customer_name_raw") or row.get("customer_name") or "").fill = fill
+        ws1.cell(row=ri, column=2, value=c_name).fill = fill
 
         cells_dict = row.get("cells", {})
+        if not isinstance(cells_dict, dict):
+            cells_dict = {}
+
         for c_idx, code in enumerate(col_codes, start=3):
-            cell_data = cells_dict.get(code, {})
+            cell_raw = cells_dict.get(code, {})
+            if isinstance(cell_raw, (int, float, str)):
+                cell_data = {"quantity": cell_raw}
+            elif isinstance(cell_raw, dict):
+                cell_data = cell_raw
+            else:
+                cell_data = {}
+
             qty = cell_data.get("quantity")
             rate = cell_data.get("rate")
+            tag = cell_data.get("tag")
+            conf = cell_data.get("confidence")
+            circled = cell_data.get("circled_value")
+
             txt = ""
             if qty is not None and rate is not None:
                 txt = f"{qty} / {rate}"
             elif qty is not None:
                 txt = str(qty)
-            tag = cell_data.get("tag")
             if tag:
                 txt += f" ({tag})"
+
             c_elem = ws1.cell(row=ri, column=c_idx, value=txt or "-")
             c_elem.fill = fill
             c_elem.alignment = Alignment(horizontal="center")
             c_elem.border = CELL_BORDER
+
+            # Check if this cell needs review
+            is_low_conf = False
+            try:
+                if conf is not None and float(conf) < 0.8:
+                    is_low_conf = True
+            except (ValueError, TypeError):
+                pass
+
+            if is_low_conf or circled or (qty is not None and str(qty).strip() == "?"):
+                needs_review_items.append({
+                    "row": ri - 2,
+                    "customer": c_name,
+                    "product": code,
+                    "quantity": qty,
+                    "rate": rate,
+                    "confidence": conf,
+                    "circled": circled,
+                    "reason": "Low OCR confidence" if is_low_conf else "Circled / Flagged item"
+                })
 
         ws1.cell(row=ri, column=len(col_codes)+3, value=row.get("notes") or "").fill = fill
 
@@ -564,22 +614,77 @@ def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.By
     for ci, h in enumerate(headers2, 1):
         cell = ws2.cell(row=1, column=ci, value=h)
         cell.font = SUBHDR_FONT; cell.fill = SUBHDR_FILL; cell.alignment = Alignment(horizontal="center"); cell.border = CELL_BORDER
+    ws2.row_dimensions[1].height = 22
 
     e_row = 2
     for row in rows:
+        if not isinstance(row, dict):
+            continue
         c_name = row.get("customer_name_raw") or row.get("customer_name") or ""
         cells_dict = row.get("cells", {})
-        for code, c_data in cells_dict.items():
+        if not isinstance(cells_dict, dict):
+            continue
+        for code, cell_raw in cells_dict.items():
+            if isinstance(cell_raw, (int, float, str)):
+                c_data = {"quantity": cell_raw}
+            elif isinstance(cell_raw, dict):
+                c_data = cell_raw
+            else:
+                continue
+
             qty = c_data.get("quantity")
-            if qty is not None:
-                rate = c_data.get("rate") or 0.0
-                amt = float(qty) * float(rate)
-                vals = [page_date, c_name, code, qty, rate, amt, c_data.get("tag"), c_data.get("circled_value"), c_data.get("confidence")]
+            if qty is not None and str(qty).strip() != "":
+                rate = c_data.get("rate")
+                try:
+                    q_num = float(qty)
+                except (ValueError, TypeError):
+                    q_num = 0.0
+                try:
+                    r_num = float(rate) if rate is not None else 0.0
+                except (ValueError, TypeError):
+                    r_num = 0.0
+
+                amt = round(q_num * r_num, 2)
+                vals = [page_date, c_name, code, qty, rate or 0.0, amt, c_data.get("tag") or "", c_data.get("circled_value") or "", c_data.get("confidence") or ""]
                 fill = EVEN_FILL if e_row % 2 == 0 else ODD_FILL
                 for ci, v in enumerate(vals, 1):
                     cell = ws2.cell(row=e_row, column=ci, value=v)
                     cell.font = BODY_FONT; cell.fill = fill; cell.border = CELL_BORDER
                 e_row += 1
+
+    # Sheet 3: Needs Review
+    ws3 = wb.create_sheet(title="Needs Review")
+    headers3 = ["Row #", "Customer", "Product Code", "Quantity", "Rate", "Confidence", "Flag / Circled", "Issue Description"]
+    for ci, h in enumerate(headers3, 1):
+        cell = ws3.cell(row=1, column=ci, value=h)
+        cell.font = SUBHDR_FONT; cell.fill = SUBHDR_FILL; cell.alignment = Alignment(horizontal="center"); cell.border = CELL_BORDER
+    ws3.row_dimensions[1].height = 22
+
+    if needs_review_items:
+        for n_idx, item in enumerate(needs_review_items, start=2):
+            fill = EVEN_FILL if n_idx % 2 == 0 else ODD_FILL
+            vals = [
+                item["row"],
+                item["customer"],
+                item["product"],
+                item["quantity"] if item["quantity"] is not None else "-",
+                item["rate"] if item["rate"] is not None else "-",
+                item["confidence"] if item["confidence"] is not None else "-",
+                str(item["circled"]) if item["circled"] else "-",
+                item["reason"]
+            ]
+            for ci, v in enumerate(vals, 1):
+                cell = ws3.cell(row=n_idx, column=ci, value=v)
+                cell.font = BODY_FONT; cell.fill = fill; cell.border = CELL_BORDER
+    else:
+        ws3.cell(row=2, column=1, value="No items requiring manual review. All entries parsed cleanly.").font = BODY_FONT
+
+    # Adjust column widths across sheets
+    for ws in [ws1, ws2, ws3]:
+        for col in ws.columns:
+            col_letter = get_column_letter(col[0].column)
+            max_len = max(len(str(cell.value or "")) for cell in col)
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
     buf = io.BytesIO()
     wb.save(buf); buf.seek(0)

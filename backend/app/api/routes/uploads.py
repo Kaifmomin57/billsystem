@@ -363,12 +363,22 @@ def download_upload_excel(
     if not upload or not upload.draft_data:
         raise HTTPException(status_code=404, detail="Upload not found or no draft data available")
         
-    draft = json.loads(upload.draft_data)
+    if isinstance(upload.draft_data, dict):
+        draft = upload.draft_data
+    else:
+        try:
+            draft = json.loads(upload.draft_data)
+        except Exception:
+            draft = {}
+
     stream = build_ledger_page_excel(draft, upload.page_date or "unknown")
     filename = f"digitized_ledger_{upload.page_date or 'page'}_{upload_id}.xlsx"
     
     return StreamingResponse(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
     )
