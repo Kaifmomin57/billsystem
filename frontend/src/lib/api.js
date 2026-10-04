@@ -1,6 +1,7 @@
 import axios from "axios";
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const rawApiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+export const API_BASE_URL = rawApiUrl.endsWith("/") ? rawApiUrl.slice(0, -1) : rawApiUrl;
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -15,13 +16,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 → redirect to login
+// Handle 401 → redirect to login (only if not already on login page)
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem("access_token");
-      window.location.href = "/login";
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login";
+      }
     }
     return Promise.reject(err);
   }

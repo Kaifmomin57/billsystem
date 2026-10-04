@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Users, Package, Receipt, IndianRupee,
@@ -72,12 +73,12 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <a href="/upload" className="btn-secondary text-xs flex items-center gap-1.5 py-2 px-3">
+          <Link to="/upload" className="btn-secondary text-xs flex items-center gap-1.5 py-2 px-3">
             <Upload className="w-4 h-4 text-emerald-400" /> Upload Ledger
-          </a>
-          <a href="/bills" className="btn-primary text-xs flex items-center gap-1.5 py-2 px-3">
+          </Link>
+          <Link to="/bills" className="btn-primary text-xs flex items-center gap-1.5 py-2 px-3">
             <Receipt className="w-4 h-4" /> Bills Workspace
-          </a>
+          </Link>
         </div>
       </div>
 
@@ -190,9 +191,9 @@ export default function Dashboard() {
             <h3 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-amber-400" /> Pending Customer Balances (Top Dues)
             </h3>
-            <a href="/bills" className="text-xs text-emerald-400 hover:underline">
+            <Link to="/bills" className="text-xs text-emerald-400 hover:underline">
               Manage Dues →
-            </a>
+            </Link>
           </div>
 
           <div className="overflow-x-auto -mx-5 px-5 sm:mx-0 sm:px-0">
@@ -215,12 +216,12 @@ export default function Dashboard() {
                         {formatCurrency(d.total_due)}
                       </td>
                       <td className="py-2.5 px-3 text-right">
-                        <a
-                          href={`/bills?customer_id=${d.customer_id}`}
+                        <Link
+                          to={`/bills?customer_id=${d.customer_id}`}
                           className="btn-secondary text-[10px] py-1 px-2 inline-flex items-center gap-1"
                         >
                           Collect Payment <ArrowRight className="w-3 h-3" />
-                        </a>
+                        </Link>
                       </td>
                     </tr>
                   ))
@@ -241,9 +242,9 @@ export default function Dashboard() {
       <div className="card">
         <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
           <h2 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">Recent Invoices & Bills</h2>
-          <a href="/bills" className="text-xs text-emerald-400 hover:underline">
+          <Link to="/bills" className="text-xs text-emerald-400 hover:underline">
             View All Bills →
-          </a>
+          </Link>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs min-w-[650px]">
