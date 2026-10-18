@@ -229,6 +229,8 @@ def generate_bill_pdf(bill_data: dict) -> bytes:
 
     for idx, itm in enumerate(items, 1):
         name = itm.get("product_name") or itm.get("name") or "Item"
+        if itm.get("is_live") or itm.get("circled_value"):
+            name = f"{name} (Live Fish ⊚)"
         unit = itm.get("unit", "pcs")
         qty = float(itm.get("quantity", 0))
         rate = float(itm.get("rate", 0))

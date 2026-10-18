@@ -27,25 +27,31 @@ Analyze the image and return ONLY valid JSON matching exactly this schema:
     {
       "customer_name_raw": "Patil",
       "cells": {
-        "M": {"quantity": 6.5, "rate": null, "tag": null, "circled_value": null, "struck_out": false, "raw_text": "", "confidence": 0.95},
-        "R": {"quantity": 8.4, "rate": 12.2, "tag": null, "circled_value": null, "struck_out": false, "raw_text": "", "confidence": 0.95},
-        "B": {"quantity": null, "rate": null, "tag": null, "circled_value": null, "struck_out": false, "raw_text": "", "confidence": 0.95},
-        "P": {"quantity": 4.7, "rate": 5.0, "tag": "P", "circled_value": null, "struck_out": false, "raw_text": "", "confidence": 0.95},
-        "K": {"quantity": 3.6, "rate": null, "tag": "mi", "circled_value": null, "struck_out": false, "raw_text": "", "confidence": 0.95},
-        "T": {"quantity": null, "rate": null, "tag": null, "circled_value": null, "struck_out": false, "raw_text": "", "confidence": 0.95},
-        "JB": {"quantity": null, "rate": null, "tag": null, "circled_value": 6, "struck_out": false, "raw_text": "", "confidence": 0.95}
+        "M": {"quantity": 6.5, "rate": null, "tag": null, "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "6.5", "confidence": 0.95},
+        "R": {"quantity": 8.4, "rate": 12.2, "tag": null, "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "8.4", "confidence": 0.95},
+        "B": {"quantity": null, "rate": null, "tag": null, "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "", "confidence": 0.95},
+        "P": {"quantity": 7.0, "rate": null, "tag": null, "circled_value": "7", "is_live": true, "struck_out": false, "raw_text": "(7)", "confidence": 0.95},
+        "K": {"quantity": 3.6, "rate": null, "tag": "mi", "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "3.6 mi", "confidence": 0.95},
+        "T": {"quantity": 40.0, "rate": null, "tag": null, "circled_value": "40", "is_live": true, "struck_out": false, "raw_text": "(40)", "confidence": 0.95},
+        "JB": {"quantity": null, "rate": null, "tag": null, "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "", "confidence": 0.95}
       }
     }
   ]
 }
 
 Rules:
-1. ALWAYS extract the customer name written in the 'NAME' / 'नाम' / left column for every row into `customer_name_raw` (e.g. Patil, Irfan, Baba, Manoj, Ramvir, Vikas, Rashid, Vaishali, etc.). Never leave `customer_name_raw` empty.
+1. ALWAYS extract the customer name written in the 'NAME' / 'नाम' / left column for every row into `customer_name_raw` (e.g. Patil, Irfan, Baba, Manoj, Ramvir, Vikas, Rashid, Vaishali, Gopi, Somchand, Jami, Hafiz, Sharik, etc.). Never leave `customer_name_raw` empty.
 2. Read the top header row of the table grid carefully. Identify ALL column header codes (e.g., M, R, B, P, K, T, JB and any other column code).
 3. Extract ALL customer rows visible on the page. For every single customer row, include a cell entry for every header column.
 4. For fraction notation (e.g. 39 over 50), set quantity=39, rate=50.
 5. Capture suffix letters (pd, mi, N, B, R, k, K, T, JB) as tag.
-6. Circled numbers → circled_value field.
+6. CIRCLED NUMBERS = LIVE FISH (CRITICAL):
+   - In Indian fish trading ledgers, any number written inside a handwritten drawn circle, oval, ring, or parentheses (e.g. ⊚40, (40), circled 7 in red ink, circled 80 in red, circled 60, circled 100) indicates LIVE FISH (जिंदा / जीवंत मछली).
+   - The circled number IS THE QUANTITY! Set `quantity` to that numeric value (e.g. 40.0, 7.0, 80.0, 60.0, 100.0).
+   - Set `is_live`: true.
+   - Set `circled_value`: string of that number (e.g. "40").
+   - Set `raw_text`: e.g. "(40)" or "circled 40".
+   - If a cell has both a normal number and a circled number (e.g. "15 (100)"), the circled number is live fish: set `quantity`: 100.0, `is_live`: true, `circled_value`: "100".
 7. Crossed-out / struck-out values → struck_out: true, use the corrected value.
 8. Confidence: 0.0-1.0 per cell (below 0.7 = yellow flag, below 0.4 = red flag).
 9. If date not readable, set page_date to null.

@@ -32,6 +32,7 @@ class Product(Base):
     id        = Column(Integer, primary_key=True, index=True)
     name      = Column(String(255), unique=True, nullable=False, index=True)
     unit      = Column(String(50), default="pcs")
+    product_code = Column(String(50))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -41,6 +42,7 @@ class ProductRate(Base):
     id         = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), unique=True)
     rate       = Column(Numeric(12, 2), nullable=False)
+    live_rate  = Column(Numeric(12, 2), nullable=True)  # Rate for live fish (circled values)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     product    = relationship("Product")
 
@@ -51,6 +53,7 @@ class CustomerRate(Base):
     customer_id = Column(Integer, ForeignKey("customers.id"))
     product_id  = Column(Integer, ForeignKey("products.id"))
     rate        = Column(Numeric(12, 2), nullable=False)
+    live_rate   = Column(Numeric(12, 2), nullable=True)  # Custom live fish rate for customer
     updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = ({"sqlite_autoincrement": False},)
 
@@ -124,6 +127,7 @@ class BillItem(Base):
     amount           = Column(Numeric(12, 2))
     tag              = Column(String(50))
     circled_value    = Column(String(100))
+    is_live          = Column(Boolean, default=False)
     confidence       = Column(Numeric(4, 2))
     raw_text         = Column(Text)
     bill             = relationship("Bill", back_populates="items")

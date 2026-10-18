@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { 
-  Package, Plus, Search, Edit2, Trash2, CheckCircle2, XCircle, 
+import {
+  Package, Plus, Search, Edit2, Trash2, CheckCircle2, XCircle,
   X, IndianRupee
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -57,6 +57,7 @@ export default function ProductsPage() {
   const [formData, setFormData] = useState({
     name: "",
     unit: "kg",
+    product_code: "",
     is_active: true,
     rate: "",
   });
@@ -80,16 +81,19 @@ export default function ProductsPage() {
   });
 
   const rateMap = baseRates.reduce((acc, r) => {
-    acc[r.product_id] = r.rate;
+    acc[r.product_id] = { rate: r.rate, live_rate: r.live_rate };
     return acc;
   }, {});
 
   // Save rate helper
   const saveRate = async (productId) => {
-    if (formData.rate !== "" && !isNaN(parseFloat(formData.rate))) {
+    const hasRate = formData.rate !== "" && !isNaN(parseFloat(formData.rate));
+    const hasLiveRate = formData.live_rate !== "" && !isNaN(parseFloat(formData.live_rate));
+    if (hasRate || hasLiveRate) {
       await api.post("/rates/products", {
         product_id: productId,
-        rate: parseFloat(formData.rate),
+        rate: hasRate ? parseFloat(formData.rate) : 0,
+        live_rate: hasLiveRate ? parseFloat(formData.live_rate) : null,
       });
       queryClient.invalidateQueries(["rates", "products"]);
     }
@@ -146,17 +150,20 @@ export default function ProductsPage() {
 
   const openAddModal = () => {
     setEditingProduct(null);
-    setFormData({ name: "", unit: "kg", is_active: true, rate: "" });
+    setFormData({ name: "", unit: "kg", product_code: "", is_active: true, rate: "", live_rate: "" });
     setIsModalOpen(true);
   };
 
   const openEditModal = (product) => {
     setEditingProduct(product);
+    const rInfo = rateMap[product.id];
     setFormData({
       name: product.name,
       unit: product.unit || "kg",
+      product_code: product.product_code || "",
       is_active: product.is_active,
-      rate: rateMap[product.id] !== undefined ? String(rateMap[product.id]) : "",
+      rate: rInfo?.rate !== undefined ? String(rInfo.rate) : "",
+      live_rate: rInfo?.live_rate !== undefined && rInfo?.live_rate !== null ? String(rInfo.live_rate) : "",
     });
     setIsModalOpen(true);
   };
@@ -186,8 +193,8 @@ export default function ProductsPage() {
       filterActive === "all"
         ? true
         : filterActive === "active"
-        ? p.is_active
-        : !p.is_active;
+          ? p.is_active
+          : !p.is_active;
     return matchesSearch && matchesFilter;
   });
 
@@ -234,11 +241,10 @@ export default function ProductsPage() {
             <button
               key={tab}
               onClick={() => setFilterActive(tab)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-all ${
-                filterActive === tab
-                  ? "bg-zinc-800 text-emerald-400 border border-emerald-500/30 shadow-sm"
-                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50"
-              }`}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-all ${filterActive === tab
+                ? "bg-zinc-800 text-emerald-400 border border-emerald-500/30 shadow-sm"
+                : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50"
+                }`}
             >
               {tab}
             </button>
@@ -271,15 +277,19 @@ export default function ProductsPage() {
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400 font-semibold uppercase tracking-wider">
                   <th className="py-3.5 px-5">Product Name</th>
+                  <th className="py-3.5 px-5">Product code</th>
                   <th className="py-3.5 px-5">Unit</th>
                   <th className="py-3.5 px-5">Base Rate</th>
+                  <th className="py-3.5 px-5 text-cyan-400">Live Rate (⊚)</th>
                   <th className="py-3.5 px-5">Status</th>
                   <th className="py-3.5 px-5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60 text-sm">
                 {filteredProducts.map((p) => {
-                  const baseRate = rateMap[p.id];
+                  const rInfo = rateMap[p.id];
+                  const baseRate = rInfo?.rate;
+                  const liveRate = rInfo?.live_rate;
                   return (
                     <tr key={p.id} className="hover:bg-zinc-800/30 transition-colors group">
                       <td className="py-4 px-5">
@@ -292,6 +302,11 @@ export default function ProductsPage() {
                             <span className="text-xs text-zinc-500">ID #{p.id}</span>
                           </div>
                         </div>
+                      </td>
+                      <td className="py-4 px-5">
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">
+                          {p.product_code}
+                        </span>
                       </td>
                       <td className="py-4 px-5">
                         <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">
@@ -310,6 +325,15 @@ export default function ProductsPage() {
                           >
                             <IndianRupee className="w-3 h-3" /> Set rate
                           </button>
+                        )}
+                      </td>
+                      <td className="py-4 px-5">
+                        {liveRate !== undefined && liveRate !== null ? (
+                          <span className="font-bold text-cyan-400 font-mono">
+                            ₹{Number(liveRate).toFixed(2)}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-600 font-mono text-xs">—</span>
                         )}
                       </td>
                       <td className="py-4 px-5">
@@ -421,6 +445,36 @@ export default function ProductsPage() {
                     className="input-field w-full text-sm pl-7 font-mono"
                   />
                 </div>
+              </div>
+
+              {/* Live Fish Rate */}
+              <div>
+                <label className="block text-xs font-medium text-cyan-400 mb-1.5 flex items-center gap-1">
+                  Live Fish Rate (₹ / {formData.unit || "kg"}) <span className="text-zinc-500 font-normal">(for ⊚ circled ledger values)</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400 text-sm font-bold pointer-events-none">₹</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="Leave blank to use standard rate"
+                    value={formData.live_rate}
+                    onChange={(e) => setFormData({ ...formData, live_rate: e.target.value })}
+                    className="input-field w-full text-sm pl-7 font-mono border-cyan-500/30 text-cyan-300 font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1.5">Product Code (Column Header in Ledger)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. M, R, B, P, K, T, JB"
+                  value={formData.product_code}
+                  onChange={(e) => setFormData({ ...formData, product_code: e.target.value })}
+                  className="input-field w-full text-sm font-mono"
+                />
                 <p className="text-xs text-zinc-600 mt-1">
                   Leave blank to set later. Used as default when no customer-specific rate exists.
                 </p>

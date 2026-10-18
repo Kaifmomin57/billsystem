@@ -35,6 +35,7 @@ def create_product(
     product = Product(
         name=data.name.strip(),
         unit=data.unit.strip() if data.unit else "pcs",
+        product_code=data.product_code.strip() if data.product_code else None,
         is_active=data.is_active
     )
     db.add(product)
@@ -71,6 +72,8 @@ def update_product(
         product.name = data.name.strip()
     if data.unit is not None:
         product.unit = data.unit.strip()
+    if data.product_code is not None:
+        product.product_code = data.product_code.strip()
     if data.is_active is not None:
         product.is_active = data.is_active
     

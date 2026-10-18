@@ -513,7 +513,15 @@ def build_daily_by_product(report_data: Union[Dict[str, Any], List[Dict]], repor
 
 
 def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.BytesIO:
-    """Generate multi-sheet Excel for a digitized ledger page (F4.14)."""
+    """
+    Generate multi-sheet Excel for a digitized ledger page.
+
+    Expects cells pre-enriched by ledger_service.resolve_ledger_rates():
+        resolved_product_code, resolved_product_name, resolved_unit,
+        resolved_rate, resolved_amount, rate_source, mapping_issue
+
+    Falls back gracefully to raw Gemini qty/rate for old/unresolved drafts.
+    """
     wb = Workbook()
 
     if not isinstance(draft_data, dict):
@@ -538,13 +546,16 @@ def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.By
     t1.font = HEADER_FONT; t1.fill = HEADER_FILL; t1.alignment = Alignment(horizontal="center", vertical="center")
     ws1.row_dimensions[1].height = 28
 
-    headers = ["#", "Customer Name"] + col_codes + ["Notes / Tags"]
+    # ── Sheet 1 header: Customer | Col codes (qty display) | Total Amount | Notes
+    headers = ["#", "Customer Name"] + col_codes + ["Total Amount (₹)", "Notes / Tags"]
     for ci, h in enumerate(headers, 1):
         cell = ws1.cell(row=2, column=ci, value=h)
         cell.font = SUBHDR_FONT; cell.fill = SUBHDR_FILL; cell.alignment = Alignment(horizontal="center"); cell.border = CELL_BORDER
     ws1.row_dimensions[2].height = 22
 
     needs_review_items = []
+    tot_amt_col = len(col_codes) + 3
+    notes_col = len(col_codes) + 4
 
     for ri, row in enumerate(rows, start=3):
         if not isinstance(row, dict):
@@ -558,6 +569,8 @@ def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.By
         if not isinstance(cells_dict, dict):
             cells_dict = {}
 
+        row_total_amt = 0.0
+
         for c_idx, code in enumerate(col_codes, start=3):
             cell_raw = cells_dict.get(code, {})
             if isinstance(cell_raw, (int, float, str)):
@@ -568,14 +581,29 @@ def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.By
                 cell_data = {}
 
             qty = cell_data.get("quantity")
-            rate = cell_data.get("rate")
+            # Use resolved_rate if available (DB-authoritative), else fall back to Gemini rate
+            resolved_rate = cell_data.get("resolved_rate")
+            resolved_amount = cell_data.get("resolved_amount")
+            gemini_rate = cell_data.get("rate")
+            display_rate = resolved_rate if resolved_rate is not None else gemini_rate
             tag = cell_data.get("tag")
             conf = cell_data.get("confidence")
             circled = cell_data.get("circled_value")
 
+            if resolved_amount is not None:
+                try:
+                    row_total_amt += float(resolved_amount)
+                except (ValueError, TypeError):
+                    pass
+            elif qty is not None and display_rate is not None:
+                try:
+                    row_total_amt += float(qty) * float(display_rate)
+                except (ValueError, TypeError):
+                    pass
+
             txt = ""
-            if qty is not None and rate is not None:
-                txt = f"{qty} / {rate}"
+            if qty is not None and display_rate is not None:
+                txt = f"{qty} / {display_rate}"
             elif qty is not None:
                 txt = str(qty)
             if tag:
@@ -586,7 +614,7 @@ def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.By
             c_elem.alignment = Alignment(horizontal="center")
             c_elem.border = CELL_BORDER
 
-            # Check if this cell needs review
+            # Confidence / circled / question-mark review flags
             is_low_conf = False
             try:
                 if conf is not None and float(conf) < 0.8:
@@ -594,23 +622,75 @@ def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.By
             except (ValueError, TypeError):
                 pass
 
+            mapping_issue = cell_data.get("mapping_issue")
+
             if is_low_conf or circled or (qty is not None and str(qty).strip() == "?"):
                 needs_review_items.append({
                     "row": ri - 2,
                     "customer": c_name,
-                    "product": code,
+                    "column_code": code,
+                    "product_code": cell_data.get("resolved_product_code") or "—",
+                    "product_name": cell_data.get("resolved_product_name") or "—",
                     "quantity": qty,
-                    "rate": rate,
+                    "rate": display_rate,
                     "confidence": conf,
                     "circled": circled,
                     "reason": "Low OCR confidence" if is_low_conf else "Circled / Flagged item"
                 })
 
-        ws1.cell(row=ri, column=len(col_codes)+3, value=row.get("notes") or "").fill = fill
+            # Also flag mapping / rate problems
+            if mapping_issue and qty is not None and str(qty).strip() not in ("", "0"):
+                needs_review_items.append({
+                    "row": ri - 2,
+                    "customer": c_name,
+                    "column_code": code,
+                    "product_code": cell_data.get("resolved_product_code") or "—",
+                    "product_name": cell_data.get("resolved_product_name") or "—",
+                    "quantity": qty,
+                    "rate": "—",
+                    "confidence": conf,
+                    "circled": circled,
+                    "reason": mapping_issue
+                })
 
-    # Sheet 2: Flat Entries List
+        # Customer Total Amount cell in Sheet 1
+        tot_cell = ws1.cell(row=ri, column=tot_amt_col, value=round(row_total_amt, 2) if row_total_amt > 0 else "-")
+        tot_cell.fill = fill
+        tot_cell.font = TOTAL_FONT
+        tot_cell.border = CELL_BORDER
+        if row_total_amt > 0:
+            tot_cell.number_format = NUM_FMT
+            tot_cell.alignment = RIGHT
+        else:
+            tot_cell.alignment = CENTER
+
+        ws1.cell(row=ri, column=notes_col, value=row.get("notes") or "").fill = fill
+
+    # Sheet 1 Bottom Total Row
+    if rows:
+        tot_ri = len(rows) + 3
+        ws1.row_dimensions[tot_ri].height = 24
+        for ci in range(1, notes_col + 1):
+            c = ws1.cell(row=tot_ri, column=ci)
+            c.fill = TOTAL_FILL
+            c.font = TOTAL_FONT
+            c.border = CELL_BORDER
+
+        ws1.cell(row=tot_ri, column=2, value="GRAND TOTAL").alignment = Alignment(horizontal="right", vertical="center")
+        tot_amt_cell = ws1.cell(row=tot_ri, column=tot_amt_col, value=f"=SUM({get_column_letter(tot_amt_col)}3:{get_column_letter(tot_amt_col)}{tot_ri-1})")
+        tot_amt_cell.number_format = NUM_FMT
+        tot_amt_cell.alignment = RIGHT
+        tot_amt_cell.font = TOTAL_FONT
+
+    # ── Sheet 2: Flat Entries List ─────────────────────────────────────────
     ws2 = wb.create_sheet(title="Entries Flat List")
-    headers2 = ["Date", "Customer", "Product Code", "Quantity", "Rate", "Amount", "Tag", "Circled Val", "Confidence"]
+    # Updated headers: Column Code + Product Code + Product Name + Unit columns added
+    headers2 = [
+        "Date", "Customer",
+        "Column", "Product Code", "Product Name", "Unit",
+        "Quantity", "Rate (DB)", "Amount",
+        "Tag", "Circled Val", "Confidence", "Rate Source"
+    ]
     for ci, h in enumerate(headers2, 1):
         cell = ws2.cell(row=1, column=ci, value=h)
         cell.font = SUBHDR_FONT; cell.fill = SUBHDR_FILL; cell.alignment = Alignment(horizontal="center"); cell.border = CELL_BORDER
@@ -634,27 +714,90 @@ def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.By
 
             qty = c_data.get("quantity")
             if qty is not None and str(qty).strip() != "":
-                rate = c_data.get("rate")
-                try:
-                    q_num = float(qty)
-                except (ValueError, TypeError):
-                    q_num = 0.0
-                try:
-                    r_num = float(rate) if rate is not None else 0.0
-                except (ValueError, TypeError):
-                    r_num = 0.0
+                # Prefer DB-resolved values; fall back gracefully for old drafts
+                resolved_rate = c_data.get("resolved_rate")
+                resolved_amount = c_data.get("resolved_amount")
+                resolved_product_code = c_data.get("resolved_product_code") or code
+                resolved_product_name = c_data.get("resolved_product_name") or "—"
+                resolved_unit = c_data.get("resolved_unit") or "—"
+                rate_source = c_data.get("rate_source") or "legacy"
 
-                amt = round(q_num * r_num, 2)
-                vals = [page_date, c_name, code, qty, rate or 0.0, amt, c_data.get("tag") or "", c_data.get("circled_value") or "", c_data.get("confidence") or ""]
+                # If no DB rate, fall back to Gemini rate for display only
+                if resolved_rate is None:
+                    gemini_rate = c_data.get("rate")
+                    try:
+                        r_num = float(gemini_rate) if gemini_rate is not None else 0.0
+                    except (ValueError, TypeError):
+                        r_num = 0.0
+                    try:
+                        q_num = float(qty)
+                    except (ValueError, TypeError):
+                        q_num = 0.0
+                    display_rate = r_num or "—"
+                    display_amount = round(q_num * r_num, 2) if r_num else "—"
+                else:
+                    display_rate = resolved_rate
+                    display_amount = resolved_amount if resolved_amount is not None else "—"
+
+                vals = [
+                    page_date,
+                    c_name,
+                    code,                    # Ledger column code (e.g. M)
+                    resolved_product_code,   # Product code (e.g. ON001)
+                    resolved_product_name,   # Product name (e.g. Onion)
+                    resolved_unit,           # Unit (e.g. kg)
+                    qty,
+                    display_rate,
+                    display_amount,
+                    c_data.get("tag") or "",
+                    c_data.get("circled_value") or "",
+                    c_data.get("confidence") or "",
+                    rate_source,
+                ]
                 fill = EVEN_FILL if e_row % 2 == 0 else ODD_FILL
                 for ci, v in enumerate(vals, 1):
                     cell = ws2.cell(row=e_row, column=ci, value=v)
                     cell.font = BODY_FONT; cell.fill = fill; cell.border = CELL_BORDER
+                    if ci in (7, 8, 9):
+                        if isinstance(v, (int, float)):
+                            cell.number_format = NUM_FMT
+                        cell.alignment = RIGHT
+                    elif ci in (1, 2, 4, 5):
+                        cell.alignment = LEFT
+                    else:
+                        cell.alignment = CENTER
                 e_row += 1
 
-    # Sheet 3: Needs Review
+    # Sheet 2 Bottom Total Summary Row
+    if e_row > 2:
+        ws2.row_dimensions[e_row].height = 24
+        for ci in range(1, 14):
+            c = ws2.cell(row=e_row, column=ci)
+            c.fill = TOTAL_FILL
+            c.font = TOTAL_FONT
+            c.border = CELL_BORDER
+
+        tot_label = ws2.cell(row=e_row, column=5, value="TOTAL")
+        tot_label.font = TOTAL_FONT
+        tot_label.alignment = Alignment(horizontal="right", vertical="center")
+
+        # Total Quantity (Column G / 7)
+        qty_cell = ws2.cell(row=e_row, column=7, value=f"=SUM(G2:G{e_row-1})")
+        qty_cell.font = TOTAL_FONT
+        qty_cell.number_format = NUM_FMT
+        qty_cell.alignment = RIGHT
+
+        # Total Amount (Column I / 9)
+        amt_cell = ws2.cell(row=e_row, column=9, value=f"=SUM(I2:I{e_row-1})")
+        amt_cell.font = TOTAL_FONT
+        amt_cell.number_format = NUM_FMT
+        amt_cell.alignment = RIGHT
+        e_row += 1
     ws3 = wb.create_sheet(title="Needs Review")
-    headers3 = ["Row #", "Customer", "Product Code", "Quantity", "Rate", "Confidence", "Flag / Circled", "Issue Description"]
+    headers3 = [
+        "Row #", "Customer", "Column Code", "Product Code", "Product Name",
+        "Quantity", "Rate", "Confidence", "Flag / Circled", "Issue Description"
+    ]
     for ci, h in enumerate(headers3, 1):
         cell = ws3.cell(row=1, column=ci, value=h)
         cell.font = SUBHDR_FONT; cell.fill = SUBHDR_FILL; cell.alignment = Alignment(horizontal="center"); cell.border = CELL_BORDER
@@ -664,14 +807,16 @@ def build_ledger_page_excel(draft_data: Dict[str, Any], page_date: str) -> io.By
         for n_idx, item in enumerate(needs_review_items, start=2):
             fill = EVEN_FILL if n_idx % 2 == 0 else ODD_FILL
             vals = [
-                item["row"],
-                item["customer"],
-                item["product"],
-                item["quantity"] if item["quantity"] is not None else "-",
-                item["rate"] if item["rate"] is not None else "-",
-                item["confidence"] if item["confidence"] is not None else "-",
-                str(item["circled"]) if item["circled"] else "-",
-                item["reason"]
+                item.get("row", "-"),
+                item.get("customer", "-"),
+                item.get("column_code", item.get("product", "-")),  # backward compat
+                item.get("product_code") or "—",
+                item.get("product_name") or "—",
+                item["quantity"] if item.get("quantity") is not None else "-",
+                item["rate"] if item.get("rate") is not None else "-",
+                item["confidence"] if item.get("confidence") is not None else "-",
+                str(item["circled"]) if item.get("circled") else "-",
+                item.get("reason", "-")
             ]
             for ci, v in enumerate(vals, 1):
                 cell = ws3.cell(row=n_idx, column=ci, value=v)

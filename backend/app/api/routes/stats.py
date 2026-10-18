@@ -19,19 +19,19 @@ def get_dashboard_stats(
     total_customers = db.query(Customer).filter(Customer.is_active == True).count()
     total_products  = db.query(Product).filter(Product.is_active == True).count()
     
-    # Query non-ledger bills for financial analytics
-    bills_query = db.query(Bill).filter(Bill.source != "ledger_ai")
+    # Query all active customer bills for financial analytics
+    bills_query = db.query(Bill).join(Customer, Customer.id == Bill.customer_id)
     total_bills  = bills_query.count()
     
-    total_sales    = float(db.query(func.sum(Bill.total_amount)).filter(Bill.source != "ledger_ai").scalar() or 0.0)
-    received_pay   = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.source != "ledger_ai").scalar() or 0.0)
-    balance_pay    = float(db.query(func.sum(Bill.balance_due)).filter(Bill.source != "ledger_ai").scalar() or 0.0)
+    total_sales    = float(db.query(func.sum(Bill.total_amount)).scalar() or 0.0)
+    received_pay   = float(db.query(func.sum(Bill.amount_paid)).scalar() or 0.0)
+    balance_pay    = float(db.query(func.sum(Bill.balance_due)).scalar() or 0.0)
     
     # Today's stats
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
     today_bills   = bills_query.filter(Bill.bill_date == today_str).count()
-    today_sales   = float(db.query(func.sum(Bill.total_amount)).filter(Bill.source != "ledger_ai", Bill.bill_date == today_str).scalar() or 0.0)
-    today_received = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.source != "ledger_ai", Bill.bill_date == today_str).scalar() or 0.0)
+    today_sales   = float(db.query(func.sum(Bill.total_amount)).filter(Bill.bill_date == today_str).scalar() or 0.0)
+    today_received = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.bill_date == today_str).scalar() or 0.0)
     
     # Payment status count breakdown
     paid_count    = bills_query.filter(Bill.payment_status == "paid").count()
@@ -39,9 +39,9 @@ def get_dashboard_stats(
     unpaid_count  = bills_query.filter(Bill.payment_status == "unpaid").count()
     
     # Payment method breakdown
-    cash_total = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.source != "ledger_ai", Bill.payment_method == "Cash").scalar() or 0.0)
-    upi_total  = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.source != "ledger_ai", Bill.payment_method == "UPI").scalar() or 0.0)
-    mixed_total= float(db.query(func.sum(Bill.amount_paid)).filter(Bill.source != "ledger_ai", Bill.payment_method == "Mixed").scalar() or 0.0)
+    cash_total = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.payment_method == "Cash").scalar() or 0.0)
+    upi_total  = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.payment_method == "UPI").scalar() or 0.0)
+    mixed_total= float(db.query(func.sum(Bill.amount_paid)).filter(Bill.payment_method == "Mixed").scalar() or 0.0)
     
     # Top debtors (customers with pending balance)
     top_debtors_raw = (
@@ -52,7 +52,7 @@ def get_dashboard_stats(
             func.count(Bill.id).label("unpaid_bills")
         )
         .join(Bill, Bill.customer_id == Customer.id)
-        .filter(Bill.source != "ledger_ai", Bill.balance_due > 0)
+        .filter(Bill.balance_due > 0)
         .group_by(Customer.id, Customer.name)
         .order_by(func.sum(Bill.balance_due).desc())
         .limit(5)
@@ -73,7 +73,6 @@ def get_dashboard_stats(
     recent_bills = (
         db.query(Bill)
         .join(Customer, Customer.id == Bill.customer_id)   # INNER JOIN = excludes orphans
-        .filter(Bill.source != "ledger_ai")
         .order_by(Bill.created_at.desc())
         .limit(5)
         .all()

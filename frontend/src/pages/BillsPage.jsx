@@ -397,8 +397,9 @@ export default function BillsPage() {
           className="input-field text-xs w-full sm:w-auto sm:min-w-[130px]"
         >
           <option value="">All Sources</option>
-          <option value="bill_ai">Single Bill AI</option>
+          <option value="ledger_ai">Ledger AI</option>
           <option value="manual">Manual Entry</option>
+          <option value="bill_ai">Single Bill AI</option>
         </select>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -470,7 +471,22 @@ export default function BillsPage() {
                   return (
                     <tr key={b.id} className="hover:bg-zinc-800/30 transition-colors">
                       <td className="py-3.5 px-3">
-                        <div className="font-mono text-xs font-semibold text-zinc-200">{b.bill_no}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono text-xs font-semibold text-zinc-200">{b.bill_no}</span>
+                          {b.source === "ledger_ai" ? (
+                            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              Ledger AI
+                            </span>
+                          ) : b.source === "bill_ai" ? (
+                            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                              Bill AI
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                              Manual
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-zinc-500 mt-0.5 flex items-center gap-1">
                           <Calendar className="w-3 h-3" /> {formatDate(b.bill_date)}
                         </div>
@@ -842,7 +858,16 @@ export default function BillsPage() {
                   <tbody className="divide-y divide-zinc-800/60">
                     {viewingBill.items?.map((item) => (
                       <tr key={item.id} className="hover:bg-zinc-800/20">
-                        <td className="p-3 font-medium text-zinc-200">{item.product_name || "Custom Item"}</td>
+                        <td className="p-3 font-medium text-zinc-200">
+                          <div className="flex items-center gap-2">
+                            <span>{item.product_name || "Custom Item"}</span>
+                            {(item.is_live || item.circled_value) && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                ⊚ LIVE
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="p-3 text-right font-mono">{item.quantity} {item.unit || "kg"}</td>
                         <td className="p-3 text-right font-mono">₹{item.rate}</td>
                         <td className="p-3 text-right font-mono font-semibold text-zinc-100">{formatCurrency(item.amount)}</td>

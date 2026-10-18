@@ -24,7 +24,6 @@ def _get_previous_unpaid_bills(bill, db):
             Bill.id != bill.id,
             Bill.payment_status.in_(["unpaid", "partial"]),
             Bill.balance_due > 0,
-            Bill.source != "ledger_ai",
         )
         .order_by(Bill.bill_date.asc(), Bill.id.asc())
         .all()
@@ -85,8 +84,8 @@ def list_bills(
     if customer_id: query = query.filter(Bill.customer_id == customer_id)
     if start_date: query = query.filter(Bill.bill_date >= start_date)
     if end_date: query = query.filter(Bill.bill_date <= end_date)
-    if source: query = query.filter(Bill.source == source)
-    else: query = query.filter(Bill.source != "ledger_ai")
+    if source and source.strip() and source.lower() != "all":
+        query = query.filter(Bill.source == source.strip())
     bills = query.order_by(Bill.bill_date.desc(), Bill.id.desc()).limit(limit).all()
     return [_format_bill_out(b, db) for b in bills]
 

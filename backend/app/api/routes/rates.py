@@ -21,9 +21,11 @@ def list_product_rates(
             id=r.id,
             product_id=r.product_id,
             rate=float(r.rate),
+            live_rate=float(r.live_rate) if r.live_rate is not None else None,
             updated_at=r.updated_at,
             product_name=r.product.name if r.product else None,
-            unit=r.product.unit if r.product else None
+            unit=r.product.unit if r.product else None,
+            product_code=r.product.product_code if r.product else None
         ))
     return results
 
@@ -42,8 +44,14 @@ def set_product_rate(
     
     if rate_record:
         rate_record.rate = data.rate
+        if data.live_rate is not None:
+            rate_record.live_rate = data.live_rate
     else:
-        rate_record = ProductRate(product_id=data.product_id, rate=data.rate)
+        rate_record = ProductRate(
+            product_id=data.product_id,
+            rate=data.rate,
+            live_rate=data.live_rate
+        )
         db.add(rate_record)
         
     # Log history
@@ -62,9 +70,56 @@ def set_product_rate(
         id=rate_record.id,
         product_id=rate_record.product_id,
         rate=float(rate_record.rate),
+        live_rate=float(rate_record.live_rate) if rate_record.live_rate is not None else None,
         updated_at=rate_record.updated_at,
         product_name=product.name,
-        unit=product.unit
+        unit=product.unit,
+        product_code=product.product_code
+    )
+
+@router.post("/products/{product_id}/live-rate", response_model=ProductRateOut)
+def set_product_live_rate(
+    product_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    rate_record = db.query(ProductRate).filter(ProductRate.product_id == product_id).first()
+    new_live = float(data["live_rate"]) if data.get("live_rate") is not None else None
+    old_live = float(rate_record.live_rate) if rate_record and rate_record.live_rate is not None else None
+    
+    if rate_record:
+        rate_record.live_rate = new_live
+    else:
+        rate_record = ProductRate(product_id=product_id, rate=0.0, live_rate=new_live)
+        db.add(rate_record)
+        
+    if new_live is not None:
+        history = RateHistory(
+            rate_type="base_live",
+            product_id=product_id,
+            old_rate=old_live,
+            new_rate=new_live,
+            changed_by=current_user.username
+        )
+        db.add(history)
+        
+    db.commit()
+    db.refresh(rate_record)
+    
+    return ProductRateOut(
+        id=rate_record.id,
+        product_id=rate_record.product_id,
+        rate=float(rate_record.rate),
+        live_rate=float(rate_record.live_rate) if rate_record.live_rate is not None else None,
+        updated_at=rate_record.updated_at,
+        product_name=product.name,
+        unit=product.unit,
+        product_code=product.product_code
     )
 
 # Customer-specific rates
@@ -91,6 +146,7 @@ def list_customer_rates(
             customer_id=r.customer_id,
             product_id=r.product_id,
             rate=float(r.rate),
+            live_rate=float(r.live_rate) if r.live_rate is not None else None,
             updated_at=r.updated_at,
             customer_name=cust.name if cust else None,
             product_name=prod.name if prod else None,
@@ -120,11 +176,14 @@ def set_customer_rate(
     
     if rate_record:
         rate_record.rate = data.rate
+        if data.live_rate is not None:
+            rate_record.live_rate = data.live_rate
     else:
         rate_record = CustomerRate(
             customer_id=data.customer_id,
             product_id=data.product_id,
-            rate=data.rate
+            rate=data.rate,
+            live_rate=data.live_rate
         )
         db.add(rate_record)
         
@@ -145,6 +204,7 @@ def set_customer_rate(
         customer_id=rate_record.customer_id,
         product_id=rate_record.product_id,
         rate=float(rate_record.rate),
+        live_rate=float(rate_record.live_rate) if rate_record.live_rate is not None else None,
         updated_at=rate_record.updated_at,
         customer_name=cust.name,
         product_name=prod.name,
@@ -164,11 +224,12 @@ def delete_customer_rate(
     db.commit()
     return {"message": "Customer rate deleted"}
 
-# Effective rate resolution: Customer Rate -> Base Rate -> 0
+# Effective rate resolution: (Customer Live / Base Live) -> Customer Rate -> Base Rate -> 0
 @router.get("/effective", response_model=RateResolutionOut)
 def get_effective_rate(
     product_id: int = Query(...),
     customer_id: Optional[int] = Query(None),
+    is_live: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -176,29 +237,97 @@ def get_effective_rate(
     if not prod:
         raise HTTPException(status_code=404, detail="Product not found")
         
+    if is_live:
+        # Check customer live rate override
+        if customer_id:
+            cr = db.query(CustomerRate).filter(
+                CustomerRate.customer_id == customer_id,
+                CustomerRate.product_id == product_id
+            ).first()
+            if cr and cr.live_rate is not None:
+                return RateResolutionOut(
+                    customer_id=customer_id,
+                    product_id=product_id,
+                    product_name=prod.name,
+                    rate=float(cr.live_rate),
+                    rate_type="customer_live",
+                    is_live=True
+                )
+                
+        # Base live rate
+        pr = db.query(ProductRate).filter(ProductRate.product_id == product_id).first()
+        if pr and pr.live_rate is not None:
+            return RateResolutionOut(
+                customer_id=customer_id,
+                product_id=product_id,
+                product_name=prod.name,
+                rate=float(pr.live_rate),
+                rate_type="base_live",
+                is_live=True
+            )
+            
+        # Fallback to customer regular rate
+        if customer_id:
+            cr = db.query(CustomerRate).filter(
+                CustomerRate.customer_id == customer_id,
+                CustomerRate.product_id == product_id
+            ).first()
+            if cr and cr.rate is not None:
+                return RateResolutionOut(
+                    customer_id=customer_id,
+                    product_id=product_id,
+                    product_name=prod.name,
+                    rate=float(cr.rate),
+                    rate_type="customer",
+                    is_live=True
+                )
+                
+        # Fallback to base regular rate
+        if pr and pr.rate is not None:
+            return RateResolutionOut(
+                customer_id=customer_id,
+                product_id=product_id,
+                product_name=prod.name,
+                rate=float(pr.rate),
+                rate_type="base",
+                is_live=True
+            )
+            
+        return RateResolutionOut(
+            customer_id=customer_id,
+            product_id=product_id,
+            product_name=prod.name,
+            rate=0.0,
+            rate_type="none",
+            is_live=True
+        )
+
+    # Standard (non-live) rate resolution
     if customer_id:
         cr = db.query(CustomerRate).filter(
             CustomerRate.customer_id == customer_id,
             CustomerRate.product_id == product_id
         ).first()
-        if cr:
+        if cr and cr.rate is not None:
             return RateResolutionOut(
                 customer_id=customer_id,
                 product_id=product_id,
                 product_name=prod.name,
                 rate=float(cr.rate),
-                rate_type="customer"
+                rate_type="customer",
+                is_live=False
             )
             
     # Base rate fallback
     pr = db.query(ProductRate).filter(ProductRate.product_id == product_id).first()
-    if pr:
+    if pr and pr.rate is not None:
         return RateResolutionOut(
             customer_id=customer_id,
             product_id=product_id,
             product_name=prod.name,
             rate=float(pr.rate),
-            rate_type="base"
+            rate_type="base",
+            is_live=False
         )
         
     return RateResolutionOut(
@@ -206,7 +335,8 @@ def get_effective_rate(
         product_id=product_id,
         product_name=prod.name,
         rate=0.0,
-        rate_type="none"
+        rate_type="none",
+        is_live=False
     )
 
 @router.get("/history")

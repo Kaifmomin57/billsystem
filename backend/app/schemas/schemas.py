@@ -54,7 +54,8 @@ class CustomerOut(CustomerBase):
 # Product schemas
 class ProductBase(BaseModel):
     name: str
-    unit: str = "pcs"
+    unit: str = "kg"
+    product_code: Optional[str] = None
     is_active: bool = True
 
 class ProductCreate(ProductBase):
@@ -63,11 +64,13 @@ class ProductCreate(ProductBase):
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
     unit: Optional[str] = None
+    product_code: Optional[str] = None
     is_active: Optional[bool] = None
 
 class ProductOut(ProductBase):
     id: int
     created_at: datetime
+    # product_code is inherited from ProductBase — do not redeclare here
     class Config:
         from_attributes = True
 
@@ -76,14 +79,17 @@ class ProductOut(ProductBase):
 class ProductRateCreate(BaseModel):
     product_id: int
     rate: float
+    live_rate: Optional[float] = None
 
 class ProductRateOut(BaseModel):
     id: int
     product_id: int
     rate: float
+    live_rate: Optional[float] = None
     updated_at: datetime
     product_name: Optional[str] = None
     unit: Optional[str] = None
+    product_code: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -91,12 +97,14 @@ class CustomerRateCreate(BaseModel):
     customer_id: int
     product_id: int
     rate: float
+    live_rate: Optional[float] = None
 
 class CustomerRateOut(BaseModel):
     id: int
     customer_id: int
     product_id: int
     rate: float
+    live_rate: Optional[float] = None
     updated_at: datetime
     customer_name: Optional[str] = None
     product_name: Optional[str] = None
@@ -109,7 +117,8 @@ class RateResolutionOut(BaseModel):
     product_id: int
     product_name: str
     rate: float
-    rate_type: str  # "customer" | "base" | "none"
+    rate_type: str  # "customer" | "base" | "customer_live" | "base_live" | "none"
+    is_live: Optional[bool] = False
 
 
 # Bill & Bill Item schemas
@@ -120,6 +129,7 @@ class BillItemCreate(BaseModel):
     amount: Optional[float] = None
     tag: Optional[str] = None
     circled_value: Optional[str] = None
+    is_live: Optional[bool] = False
     confidence: Optional[float] = 1.0
     raw_text: Optional[str] = None
 
@@ -134,6 +144,7 @@ class BillItemOut(BaseModel):
     amount: float
     tag: Optional[str]
     circled_value: Optional[str]
+    is_live: Optional[bool] = False
     confidence: Optional[float]
     raw_text: Optional[str]
     class Config:
