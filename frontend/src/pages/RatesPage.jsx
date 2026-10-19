@@ -3,31 +3,32 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   IndianRupee, Users, Package, Plus, Edit2,
   Trash2, History, ArrowRight, ShieldCheck, Sparkles, X,
-  CircleDot, HelpCircle, CheckCircle2, AlertTriangle, Info, TrendingUp
+  CircleDot, CheckCircle2, TrendingUp, Search, ChevronDown, ChevronUp
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../lib/api";
 
 export default function RatesPage() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState("live"); // live | customer | history
+  const [activeTab, setActiveTab] = useState("base"); // base | customer | history
   const [search, setSearch] = useState("");
-  const [liveSearch, setLiveSearch] = useState("");
+  const [baseSearch, setBaseSearch] = useState("");
 
-  // Customer Modal state
-  const [isCustModalOpen, setIsCustModalOpen] = useState(false);
-  const [editingRate, setEditingRate] = useState(null); // null = new, obj = edit
-  const [custForm, setCustForm] = useState({ customer_id: "", product_id: "", rate: "", live_rate: "" });
-
-  // Product Live Rate Modal state
-  const [editingLiveProduct, setEditingLiveProduct] = useState(null); // product rate obj
-  const [liveRateInput, setLiveRateInput] = useState("");
-
-  // Rate Tester
+  // Rate Tester Collapsible State
+  const [showTester, setShowTester] = useState(false);
   const [testCustId, setTestCustId] = useState("");
   const [testProdId, setTestProdId] = useState("");
   const [testIsLive, setTestIsLive] = useState(false);
   const [testResult, setTestResult] = useState(null);
+
+  // Customer Modal state
+  const [isCustModalOpen, setIsCustModalOpen] = useState(false);
+  const [editingRate, setEditingRate] = useState(null);
+  const [custForm, setCustForm] = useState({ customer_id: "", product_id: "", rate: "", live_rate: "" });
+
+  // Product Live Rate Modal state
+  const [editingLiveProduct, setEditingLiveProduct] = useState(null);
+  const [liveRateInput, setLiveRateInput] = useState("");
 
   // Data fetching
   const { data: customers = [] } = useQuery({
@@ -129,7 +130,7 @@ export default function RatesPage() {
     if (!custForm.customer_id) return toast.error("Select a customer");
     if (!custForm.product_id) return toast.error("Select a product");
     const rateVal = parseFloat(custForm.rate);
-    if (isNaN(rateVal) || rateVal < 0) return toast.error("Enter a valid base rate");
+    if (isNaN(rateVal) || rateVal < 0) return toast.error("Enter a valid standard rate");
     saveCustRateMutation.mutate(custForm);
   };
 
@@ -165,284 +166,252 @@ export default function RatesPage() {
 
   const filteredBaseRates = baseRates.filter(
     (r) =>
-      r.product_name?.toLowerCase().includes(liveSearch.toLowerCase()) ||
-      (r.product_code && r.product_code.toLowerCase().includes(liveSearch.toLowerCase()))
+      r.product_name?.toLowerCase().includes(baseSearch.toLowerCase()) ||
+      (r.product_code && r.product_code.toLowerCase().includes(baseSearch.toLowerCase()))
   );
 
-  const configuredLiveCount = baseRates.filter((r) => r.live_rate !== null && r.live_rate > 0).length;
-
   return (
-    <div className="flex flex-col gap-6 max-w-7xl mx-auto">
+    <div className="flex flex-col gap-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2.5">
-            <IndianRupee className="w-7 h-7 text-emerald-400" />
+          <h1 className="text-xl sm:text-2xl font-bold text-zinc-100 tracking-tight">
             Rates Management
           </h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Manage Standard Rates, <strong>Live Fish (Circled ⊚)</strong> Rates, and Customer Overrides
+          <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
+            Set default product rates, live fish rates, and customer special overrides
           </p>
         </div>
         <div className="flex items-center gap-2.5">
           <button
+            onClick={() => setShowTester(!showTester)}
+            className={`btn-secondary text-xs sm:text-sm flex items-center gap-2 ${
+              showTester ? "bg-zinc-800 text-emerald-400 border-emerald-500/30" : ""
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-emerald-400" />
+            <span>Test Rate</span>
+            {showTester ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+          <button
             onClick={() => {
-              if (activeTab === "live" && baseRates.length > 0) {
+              if (activeTab === "base" && baseRates.length > 0) {
                 openEditLiveRateModal(baseRates[0]);
               } else {
                 openNewCustModal();
               }
             }}
-            className="btn-primary inline-flex items-center gap-2 shadow-lg shadow-emerald-950/40"
+            className="btn-primary text-xs sm:text-sm flex items-center gap-1.5"
           >
             <Plus className="w-4 h-4" />
-            {activeTab === "live" ? "Set Live Fish Rate" : "Add Custom Rate"}
+            <span>{activeTab === "base" ? "Set Live Fish Rate" : "Add Custom Rate"}</span>
           </button>
         </div>
       </div>
 
-      {/* Live Rate Tester */}
-      <div className="card p-5 bg-gradient-to-r from-zinc-900 via-zinc-900/90 to-emerald-950/20 border border-emerald-500/20">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-            <Sparkles className="w-4 h-4" /> Rate Lookup & Resolution Simulator
-          </div>
-          <span className="text-[11px] text-zinc-400">
-            Checks priority: Customer Live &gt; Base Live &gt; Customer &gt; Base
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">Customer (optional)</label>
-            <select
-              value={testCustId}
-              onChange={(e) => setTestCustId(e.target.value)}
-              className="input-field w-full text-sm"
+      {/* Collapsible Rate Tester (Keeps the main page calm and uncluttered) */}
+      {showTester && (
+        <div className="card p-4 sm:p-5 border-zinc-800 animate-slide-in">
+          <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80 mb-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-sm font-semibold text-zinc-200">Rate Calculator & Resolution Checker</h3>
+            </div>
+            <button
+              onClick={() => setShowTester(false)}
+              className="p-1 text-zinc-400 hover:text-zinc-200 rounded"
             >
-              <option value="">— Generic / Standard —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">Product *</label>
-            <select
-              value={testProdId}
-              onChange={(e) => setTestProdId(e.target.value)}
-              className="input-field w-full text-sm"
-            >
-              <option value="">— Select product —</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.product_code ? `[${p.product_code}] ` : ""}{p.name} ({p.unit})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">Entry Condition</label>
-            <label className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer select-none transition-all ${testIsLive
-              ? "bg-cyan-950/40 border-cyan-500/50 text-cyan-300"
-              : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200"
-              }`}>
-              <input
-                type="checkbox"
-                checked={testIsLive}
-                onChange={(e) => setTestIsLive(e.target.checked)}
-                className="rounded border-zinc-700 bg-zinc-800 text-cyan-500 focus:ring-0 cursor-pointer"
-              />
-              <span className="text-xs font-semibold flex items-center gap-1.5">
-                <CircleDot className="w-3.5 h-3.5 text-cyan-400" />
-                Live Fish (Circled ⊚)
-              </span>
-            </label>
-          </div>
-          <button
-            onClick={handleTestResolution}
-            className="btn-primary h-[42px] flex items-center justify-center gap-2"
-          >
-            Check Rate <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
 
-        {testResult && (
-          <div className="mt-4 p-3.5 rounded-xl bg-zinc-950/80 border border-zinc-800 flex items-center justify-between animate-in fade-in">
-            <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-lg ${testResult.is_live
-                ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
-                : testResult.rate_type.includes("customer")
-                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                  : "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                }`}>
-                {testResult.is_live ? <CircleDot className="w-5 h-5 text-cyan-400" /> : <ShieldCheck className="w-5 h-5" />}
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-zinc-100">{testResult.product_name}</span>
-                  {testResult.is_live && (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                      ⊚ LIVE FISH
-                    </span>
-                  )}
-                </div>
-                <span className="text-xs text-zinc-400 block mt-0.5">
-                  Resolution: <strong className="capitalize text-zinc-200">{testResult.rate_type.replace("_", " ")} rate</strong>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+            <div>
+              <label className="label">Customer (Optional)</label>
+              <select
+                value={testCustId}
+                onChange={(e) => setTestCustId(e.target.value)}
+                className="input-field text-xs sm:text-sm"
+              >
+                <option value="">— Standard Base Rate —</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Product *</label>
+              <select
+                value={testProdId}
+                onChange={(e) => setTestProdId(e.target.value)}
+                className="input-field text-xs sm:text-sm"
+              >
+                <option value="">— Select product —</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.product_code ? `[${p.product_code}] ` : ""}{p.name} ({p.unit})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Type</label>
+              <label className="flex items-center gap-2.5 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg cursor-pointer text-xs sm:text-sm text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={testIsLive}
+                  onChange={(e) => setTestIsLive(e.target.checked)}
+                  className="rounded border-zinc-700 bg-zinc-800 text-emerald-500 focus:ring-0"
+                />
+                <span className="flex items-center gap-1.5 font-medium">
+                  <CircleDot className="w-3.5 h-3.5 text-emerald-400" />
+                  Live Fish (Circled ⊚)
                 </span>
+              </label>
+            </div>
+            <button
+              onClick={handleTestResolution}
+              className="btn-primary text-xs sm:text-sm flex items-center justify-center gap-1.5"
+            >
+              <span>Calculate</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          {testResult && (
+            <div className="mt-4 p-3.5 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-zinc-200">{testResult.product_name}</span>
+                    {testResult.is_live && (
+                      <span className="badge-green text-[10px]">⊚ Live Fish</span>
+                    )}
+                  </div>
+                  <span className="text-xs text-zinc-400 mt-0.5 block">
+                    Source: <strong className="capitalize text-zinc-300">{testResult.rate_type.replace("_", " ")}</strong>
+                  </span>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-xl font-bold font-mono text-emerald-400">
+                  ₹{Number(testResult.rate).toFixed(2)}
+                </div>
+                <div className="text-[11px] text-zinc-500">per unit</div>
               </div>
             </div>
-            <div className="text-right">
-              <span className={`text-2xl font-bold font-mono ${testResult.is_live ? "text-cyan-400" : "text-emerald-400"}`}>
-                ₹{Number(testResult.rate).toFixed(2)}
-              </span>
-              <span className="text-[11px] text-zinc-500 block">per unit</span>
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-      {/* Navigation Tabs */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 pb-2">
+      {/* Clean Segmented Navigation */}
+      <div className="segmented-nav self-start">
         <button
-          onClick={() => setActiveTab("live")}
-          className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "live"
-            ? "bg-zinc-800 text-cyan-400 border border-cyan-500/30 shadow-sm"
-            : "text-zinc-400 hover:text-zinc-200"
-            }`}
+          onClick={() => setActiveTab("base")}
+          className={`segmented-item flex items-center gap-2 ${activeTab === "base" ? "active" : ""}`}
         >
-          <CircleDot className="w-4 h-4 text-cyan-400" />
-          Live Fish Rates ({configuredLiveCount}/{baseRates.length})
+          <Package className="w-3.5 h-3.5" />
+          <span>Product Rates ({baseRates.length})</span>
         </button>
         <button
           onClick={() => setActiveTab("customer")}
-          className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "customer"
-            ? "bg-zinc-800 text-emerald-400 border border-emerald-500/30 shadow-sm"
-            : "text-zinc-400 hover:text-zinc-200"
-            }`}
+          className={`segmented-item flex items-center gap-2 ${activeTab === "customer" ? "active" : ""}`}
         >
-          <Users className="w-4 h-4 text-emerald-400" />
-          Customer Overrides ({customerRates.length})
+          <Users className="w-3.5 h-3.5" />
+          <span>Customer Overrides ({customerRates.length})</span>
         </button>
         <button
           onClick={() => setActiveTab("history")}
-          className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-2 ${activeTab === "history"
-            ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
-            : "text-zinc-400 hover:text-zinc-200"
-            }`}
+          className={`segmented-item flex items-center gap-2 ${activeTab === "history" ? "active" : ""}`}
         >
-          <History className="w-4 h-4" />
-          Change History
+          <History className="w-3.5 h-3.5" />
+          <span>Rate History</span>
         </button>
       </div>
 
-      {/* =================================================================== */}
-      {/* TAB 1: LIVE FISH RATES SECTION                                       */}
-      {/* =================================================================== */}
-      {activeTab === "live" && (
-        <div className="space-y-6">
-
-
-          {/* Product Live Rates Table */}
-          <div className="card overflow-hidden">
-            <div className="p-3.5 sm:p-4 border-b border-zinc-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
-                  <Package className="w-4 h-4 text-cyan-400" />
-                  Product Live Fish Base Rates
-                </h3>
-                <p className="text-xs text-zinc-400">
-                  Default live rates applied for all customers without specific overrides
-                </p>
-              </div>
+      {/* ─── TAB 1: PRODUCT BASE & LIVE RATES ──────────────────────────── */}
+      {activeTab === "base" && (
+        <div className="card overflow-hidden">
+          <div className="p-4 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
               <input
                 type="text"
-                placeholder="Search products or code..."
-                value={liveSearch}
-                onChange={(e) => setLiveSearch(e.target.value)}
-                className="input-field text-xs w-full sm:w-56"
+                placeholder="Search products..."
+                value={baseSearch}
+                onChange={(e) => setBaseSearch(e.target.value)}
+                className="input-field pl-9 text-xs sm:text-sm"
               />
             </div>
+            <div className="text-xs text-zinc-400">
+              Showing {filteredBaseRates.length} products
+            </div>
+          </div>
 
-            {loadingBase ? (
-              <div className="p-12 flex justify-center">
-                <div className="w-7 h-7 rounded-full border-2 border-zinc-700 border-t-cyan-500 animate-spin" />
-              </div>
-            ) : filteredBaseRates.length === 0 ? (
-              <div className="p-12 text-center text-sm text-zinc-500">
-                No products found. Add products in the Products page first.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left min-w-[650px]">
+          {loadingBase ? (
+            <div className="p-12 flex justify-center">
+              <div className="w-6 h-6 rounded-full border-2 border-zinc-700 border-t-emerald-500 animate-spin" />
+            </div>
+          ) : filteredBaseRates.length === 0 ? (
+            <div className="p-12 text-center text-sm text-zinc-500">
+              No products found matching your search.
+            </div>
+          ) : (
+            <>
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="data-table">
                   <thead>
-                    <tr className="border-b border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400 font-semibold uppercase tracking-wider">
-                      <th className="py-3 px-5">Code</th>
-                      <th className="py-3 px-5">Product Name</th>
-                      <th className="py-3 px-5">Standard Rate (Dead/Fresh)</th>
-                      <th className="py-3 px-5 text-cyan-400">Live Fish Rate (Circled ⊚)</th>
-                      <th className="py-3 px-5">Live Markup</th>
-                      <th className="py-3 px-5">Status</th>
-                      <th className="py-3 px-5 text-right">Action</th>
+                    <tr>
+                      <th>Code</th>
+                      <th>Product Name</th>
+                      <th>Standard Rate</th>
+                      <th>Live Fish Rate (⊚)</th>
+                      <th>Status</th>
+                      <th className="text-right">Action</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-800/60 text-sm">
+                  <tbody>
                     {filteredBaseRates.map((r) => {
                       const hasLive = r.live_rate !== null && r.live_rate !== undefined && r.live_rate > 0;
-                      const diff = hasLive ? r.live_rate - r.rate : 0;
-                      const pct = hasLive && r.rate > 0 ? ((diff / r.rate) * 100).toFixed(0) : 0;
-
                       return (
-                        <tr key={r.id} className="hover:bg-zinc-800/30 transition-colors">
-                          <td className="py-3.5 px-5 font-mono font-bold text-xs text-emerald-400">
+                        <tr key={r.id}>
+                          <td className="font-mono font-medium text-xs text-zinc-400">
                             {r.product_code || "—"}
                           </td>
-                          <td className="py-3.5 px-5 font-medium text-zinc-100">
+                          <td className="font-medium text-zinc-100">
                             {r.product_name} <span className="text-xs text-zinc-500 font-mono">({r.unit || "kg"})</span>
                           </td>
-                          <td className="py-3.5 px-5 font-mono text-zinc-300 font-semibold">
+                          <td className="font-mono text-zinc-200">
                             ₹{Number(r.rate).toFixed(2)}
                           </td>
-                          <td className="py-3.5 px-5 font-mono font-bold text-cyan-400">
+                          <td className="font-mono">
                             {hasLive ? (
-                              <span className="flex items-center gap-1.5">
-                                <CircleDot className="w-3.5 h-3.5 text-cyan-400" />
+                              <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                                <CircleDot className="w-3.5 h-3.5" />
                                 ₹{Number(r.live_rate).toFixed(2)}
                               </span>
                             ) : (
-                              <span className="text-zinc-500 font-normal italic text-xs">
-                                ₹{Number(r.rate).toFixed(2)} (Standard fallback)
-                              </span>
+                              <span className="text-zinc-500 text-xs italic">Same as standard</span>
                             )}
                           </td>
-                          <td className="py-3.5 px-5 text-xs">
+                          <td>
                             {hasLive ? (
-                              <span className="inline-flex items-center gap-1 font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                                <TrendingUp className="w-3 h-3" />
-                                +₹{diff.toFixed(2)} ({pct}%)
-                              </span>
+                              <span className="badge-green">Live Rate Active</span>
                             ) : (
-                              <span className="text-zinc-600 font-mono">—</span>
+                              <span className="badge-zinc">Standard Only</span>
                             )}
                           </td>
-                          <td className="py-3.5 px-5 text-xs">
-                            {hasLive ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
-                                <CheckCircle2 className="w-3 h-3" /> Active Live Rate
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                <AlertTriangle className="w-3 h-3" /> Standard Fallback
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-5 text-right">
+                          <td className="text-right">
                             <button
                               onClick={() => openEditLiveRateModal(r)}
-                              className="btn-secondary text-xs py-1.5 px-3 inline-flex items-center gap-1.5 text-cyan-400 hover:text-cyan-300"
+                              className="btn-ghost btn-sm text-xs text-emerald-400 hover:text-emerald-300"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
-                              {hasLive ? "Edit Live Rate" : "Set Live Rate"}
+                              <span>{hasLive ? "Edit Live Rate" : "Set Live Rate"}</span>
                             </button>
                           </td>
                         </tr>
@@ -451,220 +420,354 @@ export default function RatesPage() {
                   </tbody>
                 </table>
               </div>
-            )}
-          </div>
+
+              {/* Mobile Card List (< md) */}
+              <div className="block md:hidden p-3 sm:p-4 flex flex-col gap-3.5">
+                {filteredBaseRates.map((r) => {
+                  const hasLive = r.live_rate !== null && r.live_rate !== undefined && r.live_rate > 0;
+                  return (
+                    <div key={r.id} className="p-4 flex flex-col gap-3.5 bg-zinc-900/90 border border-zinc-800/90 rounded-xl shadow-sm hover:border-zinc-700/80 transition-all">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-zinc-100 text-sm">{r.product_name}</div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="badge-zinc font-mono text-[10px]">{r.product_code || "No Code"}</span>
+                            <span className="text-xs text-zinc-400 font-mono">Unit: {r.unit || "kg"}</span>
+                          </div>
+                        </div>
+                        <span className={hasLive ? "badge-green text-xs" : "badge-zinc text-xs"}>
+                          {hasLive ? "Live Active" : "Standard Only"}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 p-2.5 rounded-lg bg-zinc-950/70 border border-zinc-800/70 text-xs">
+                        <div>
+                          <span className="text-[10px] text-zinc-500 uppercase tracking-wider block">Standard Rate</span>
+                          <span className="font-mono font-medium text-zinc-200 mt-0.5 block">
+                            ₹{Number(r.rate).toFixed(2)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-zinc-500 uppercase tracking-wider block">Live Fish (⊚)</span>
+                          {hasLive ? (
+                            <span className="font-mono font-semibold text-emerald-400 mt-0.5 flex items-center gap-1">
+                              <CircleDot className="w-3 h-3" />
+                              ₹{Number(r.live_rate).toFixed(2)}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-500 text-xs italic mt-0.5 block">Same as std</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => openEditLiveRateModal(r)}
+                        className="btn-secondary btn-sm w-full flex items-center justify-center gap-1.5 text-xs text-emerald-400 border-zinc-800 hover:border-emerald-500/30 py-2"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span>{hasLive ? "Update Live Fish Rate" : "Set Live Fish Rate"}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       )}
 
-      {/* =================================================================== */}
-      {/* TAB 2: CUSTOMER-SPECIFIC RATES                                      */}
-      {/* =================================================================== */}
+      {/* ─── TAB 2: CUSTOMER SPECIAL RATES ─────────────────────────────── */}
       {activeTab === "customer" && (
         <div className="card overflow-hidden">
-          <div className="p-3.5 sm:p-4 border-b border-zinc-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-bold text-zinc-100">Customer-Specific Overrides</h3>
-              <p className="text-xs text-zinc-400">
-                Special contracted rates per customer (supports standard and live fish rates)
-              </p>
+          <div className="p-4 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+              <input
+                type="text"
+                placeholder="Search customer or product..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="input-field pl-9 text-xs sm:text-sm"
+              />
             </div>
-            <input
-              type="text"
-              placeholder="Search customer or product..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="input-field text-xs w-full sm:w-56"
-            />
+            <button
+              onClick={openNewCustModal}
+              className="btn-primary btn-sm flex items-center gap-1 self-start sm:self-auto"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Custom Rate</span>
+            </button>
           </div>
 
           {loadingCust ? (
             <div className="p-12 flex justify-center">
-              <div className="w-7 h-7 rounded-full border-2 border-zinc-700 border-t-emerald-500 animate-spin" />
+              <div className="w-6 h-6 rounded-full border-2 border-zinc-700 border-t-emerald-500 animate-spin" />
             </div>
           ) : filteredRates.length === 0 ? (
-            <div className="p-12 text-center">
-              <Users className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
-              <p className="text-sm text-zinc-500">
-                {search ? "No rates match your search." : "No custom rates set yet. Customers will use the base product rates."}
-              </p>
-              {!search && (
-                <button onClick={openNewCustModal} className="btn-primary mt-4 inline-flex items-center gap-2 text-sm">
-                  <Plus className="w-4 h-4" /> Add First Custom Rate
-                </button>
-              )}
+            <div className="p-12 text-center text-sm text-zinc-500">
+              {search ? "No custom rates match your search." : "No custom rates added. All customers use base product rates."}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left min-w-[600px]">
-                <thead>
-                  <tr className="border-b border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400 font-semibold uppercase">
-                    <th className="py-3 px-5">Customer</th>
-                    <th className="py-3 px-5">Product</th>
-                    <th className="py-3 px-5">Standard Rate</th>
-                    <th className="py-3 px-5 text-cyan-400">Live Rate (⊚)</th>
-                    <th className="py-3 px-5">Updated</th>
-                    <th className="py-3 px-5 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/60 text-sm">
-                  {filteredRates.map((r) => (
-                    <tr key={r.id} className="hover:bg-zinc-800/30 transition-colors">
-                      <td className="py-3.5 px-5 font-medium text-zinc-100">{r.customer_name}</td>
-                      <td className="py-3.5 px-5 text-zinc-300">
-                        {r.product_name} <span className="text-xs text-zinc-500">({r.unit})</span>
-                      </td>
-                      <td className="py-3.5 px-5 font-mono font-bold text-emerald-400">
-                        ₹{Number(r.rate).toFixed(2)}
-                      </td>
-                      <td className="py-3.5 px-5 font-mono font-bold text-cyan-400">
+            <>
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Customer</th>
+                      <th>Product</th>
+                      <th>Standard Rate</th>
+                      <th>Live Fish Rate (⊚)</th>
+                      <th>Last Updated</th>
+                      <th className="text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRates.map((r) => (
+                      <tr key={r.id}>
+                        <td className="font-medium text-zinc-100">{r.customer_name}</td>
+                        <td className="text-zinc-300">
+                          {r.product_name} <span className="text-xs text-zinc-500">({r.unit})</span>
+                        </td>
+                        <td className="font-mono font-medium text-zinc-200">
+                          ₹{Number(r.rate).toFixed(2)}
+                        </td>
+                        <td className="font-mono">
+                          {r.live_rate !== null && r.live_rate !== undefined ? (
+                            <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                              <CircleDot className="w-3.5 h-3.5" />
+                              ₹{Number(r.live_rate).toFixed(2)}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-500 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="text-xs text-zinc-400">
+                          {new Date(r.updated_at).toLocaleDateString()}
+                        </td>
+                        <td className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => openEditCustModal(r)}
+                              className="btn-ghost btn-sm !px-2"
+                              title="Edit rate"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`Remove custom rate for ${r.customer_name} → ${r.product_name}?`)) {
+                                  deleteCustRateMutation.mutate(r.id);
+                                }
+                              }}
+                              className="btn-ghost btn-sm !px-2 hover:text-rose-400 hover:bg-rose-500/10"
+                              title="Delete rate"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Card List (< md) */}
+              <div className="block md:hidden p-3 sm:p-4 flex flex-col gap-3.5">
+                {filteredRates.map((r) => (
+                  <div key={r.id} className="p-4 flex flex-col gap-3.5 bg-zinc-900/90 border border-zinc-800/90 rounded-xl shadow-sm hover:border-zinc-700/80 transition-all">
+                    <div className="flex items-center justify-between">
+                      <div className="font-semibold text-zinc-100 text-sm">{r.customer_name}</div>
+                      <div className="text-xs text-zinc-500">{new Date(r.updated_at).toLocaleDateString()}</div>
+                    </div>
+
+                    <div className="text-xs text-zinc-300">
+                      Product: <span className="text-zinc-100 font-medium">{r.product_name}</span>{" "}
+                      <span className="text-zinc-500 font-mono">({r.unit || "kg"})</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 p-2.5 rounded-lg bg-zinc-950/70 border border-zinc-800/70 text-xs">
+                      <div>
+                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider block">Standard Rate</span>
+                        <span className="font-mono font-medium text-zinc-200 mt-0.5 block">
+                          ₹{Number(r.rate).toFixed(2)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider block">Live Rate (⊚)</span>
                         {r.live_rate !== null && r.live_rate !== undefined ? (
-                          <span className="flex items-center gap-1">
+                          <span className="font-mono font-semibold text-emerald-400 mt-0.5 flex items-center gap-1">
                             <CircleDot className="w-3.5 h-3.5" />
                             ₹{Number(r.live_rate).toFixed(2)}
                           </span>
                         ) : (
-                          <span className="text-zinc-600 font-normal font-sans text-xs">—</span>
+                          <span className="text-zinc-500 text-xs mt-0.5 block">—</span>
                         )}
-                      </td>
-                      <td className="py-3.5 px-5 text-xs text-zinc-500">
-                        {new Date(r.updated_at).toLocaleDateString()}
-                      </td>
-                      <td className="py-3.5 px-5 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => openEditCustModal(r)}
-                            className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors"
-                            title="Edit rate"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (confirm(`Remove custom rate for ${r.customer_name} → ${r.product_name}?`)) {
-                                deleteCustRateMutation.mutate(r.id);
-                              }
-                            }}
-                            className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-                            title="Delete rate"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => openEditCustModal(r)}
+                        className="btn-secondary btn-sm flex-1 flex items-center justify-center gap-1.5 text-xs py-2"
+                      >
+                        <Edit2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Edit Rate</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Remove custom rate for ${r.customer_name} → ${r.product_name}?`)) {
+                            deleteCustRateMutation.mutate(r.id);
+                          }
+                        }}
+                        className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 active:scale-95 transition-all"
+                        title="Delete rate"
+                      >
+                        <Trash2 className="w-4 h-4 text-rose-400" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
 
-      {/* =================================================================== */}
-      {/* TAB 3: CHANGE HISTORY                                               */}
-      {/* =================================================================== */}
+      {/* ─── TAB 3: RATE AUDIT HISTORY ─────────────────────────────────── */}
       {activeTab === "history" && (
         <div className="card overflow-hidden">
           <div className="p-4 border-b border-zinc-800">
-            <h3 className="text-sm font-bold text-zinc-200">Rate Change Log</h3>
+            <h3 className="text-sm font-semibold text-zinc-200">Rate Change Audit Log</h3>
           </div>
           {history.length === 0 ? (
             <div className="p-12 text-center text-sm text-zinc-500">No rate changes recorded yet.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400 font-semibold uppercase">
-                    <th className="py-3 px-5">Type</th>
-                    <th className="py-3 px-5">Target</th>
-                    <th className="py-3 px-5">Old Rate</th>
-                    <th className="py-3 px-5">New Rate</th>
-                    <th className="py-3 px-5">By</th>
-                    <th className="py-3 px-5">When</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/60 text-sm">
-                  {history.map((h) => (
-                    <tr key={h.id} className="hover:bg-zinc-800/30">
-                      <td className="py-3.5 px-5">
-                        <span className={`px-2 py-0.5 rounded text-xs uppercase font-bold ${h.rate_type === "base_live"
-                          ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/30"
-                          : h.rate_type === "customer"
-                            ? "bg-emerald-500/10 text-emerald-400"
-                            : "bg-blue-500/10 text-blue-400"
-                          }`}>
-                          {h.rate_type.replace("_", " ")}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-5">
-                        <span className="font-medium text-zinc-100">{h.product_name}</span>
-                        {h.customer_name && (
-                          <span className="text-xs text-zinc-400 block">For: {h.customer_name}</span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-5 font-mono text-zinc-500 line-through">
-                        {h.old_rate !== null ? `₹${Number(h.old_rate).toFixed(2)}` : "—"}
-                      </td>
-                      <td className="py-3.5 px-5 font-mono font-semibold text-emerald-400">
-                        ₹{Number(h.new_rate).toFixed(2)}
-                      </td>
-                      <td className="py-3.5 px-5 text-xs text-zinc-400">{h.changed_by}</td>
-                      <td className="py-3.5 px-5 text-xs text-zinc-500">{new Date(h.changed_at).toLocaleString()}</td>
+            <>
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Target</th>
+                      <th>Old Rate</th>
+                      <th>New Rate</th>
+                      <th>Updated By</th>
+                      <th>Timestamp</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {history.map((h) => (
+                      <tr key={h.id}>
+                        <td>
+                          <span className="badge-zinc uppercase text-[10px]">
+                            {h.rate_type.replace("_", " ")}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="font-medium text-zinc-200">{h.product_name}</span>
+                          {h.customer_name && (
+                            <span className="text-xs text-zinc-400 block">Customer: {h.customer_name}</span>
+                          )}
+                        </td>
+                        <td className="font-mono text-zinc-500 line-through">
+                          {h.old_rate !== null ? `₹${Number(h.old_rate).toFixed(2)}` : "—"}
+                        </td>
+                        <td className="font-mono font-medium text-emerald-400">
+                          ₹{Number(h.new_rate).toFixed(2)}
+                        </td>
+                        <td className="text-xs text-zinc-400">{h.changed_by}</td>
+                        <td className="text-xs text-zinc-500">{new Date(h.changed_at).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Card List (< md) */}
+              <div className="block md:hidden p-3 sm:p-4 flex flex-col gap-3.5">
+                {history.map((h) => (
+                  <div key={h.id} className="p-4 flex flex-col gap-3 text-xs bg-zinc-900/90 border border-zinc-800/90 rounded-xl shadow-sm hover:border-zinc-700/80 transition-all">
+                    <div className="flex items-center justify-between">
+                      <span className="badge-zinc uppercase text-[10px]">
+                        {h.rate_type.replace("_", " ")}
+                      </span>
+                      <span className="text-zinc-500 text-[11px]">{new Date(h.changed_at).toLocaleDateString()}</span>
+                    </div>
+
+                    <div className="font-semibold text-zinc-100 text-sm">
+                      {h.product_name}
+                      {h.customer_name && (
+                        <span className="text-xs text-zinc-400 block font-normal mt-0.5">Customer: {h.customer_name}</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-950/70 border border-zinc-800/70">
+                      <div>
+                        <span className="text-[10px] text-zinc-500 uppercase block">Old Rate</span>
+                        <span className="font-mono text-zinc-500 line-through mt-0.5 block">
+                          {h.old_rate !== null ? `₹${Number(h.old_rate).toFixed(2)}` : "—"}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] text-zinc-500 uppercase block">New Rate</span>
+                        <span className="font-mono font-bold text-emerald-400 mt-0.5 block">
+                          ₹{Number(h.new_rate).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-zinc-400 pt-0.5">
+                      Changed by: <span className="text-zinc-200">{h.changed_by}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
 
-      {/* =================================================================== */}
-      {/* MODAL: EDIT PRODUCT LIVE FISH RATE                                  */}
-      {/* =================================================================== */}
+      {/* ─── MODAL: EDIT PRODUCT LIVE FISH RATE ────────────────────────── */}
       {editingLiveProduct && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-cyan-500/30 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in">
-            <div className="flex items-center justify-between p-5 border-b border-zinc-800 bg-zinc-950/40">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center">
-                  <CircleDot className="w-4 h-4 text-cyan-400" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-100">
-                    Set Live Fish Rate (⊚)
-                  </h3>
-                  <p className="text-xs text-zinc-400">
-                    {editingLiveProduct.product_name} ({editingLiveProduct.product_code || "No code"})
-                  </p>
-                </div>
+          <div className="card w-full max-w-md animate-slide-in">
+            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-100">
+                  Set Live Fish Rate (⊚)
+                </h3>
+                <p className="text-xs text-zinc-400">
+                  {editingLiveProduct.product_name} ({editingLiveProduct.product_code || "No code"})
+                </p>
               </div>
               <button
                 onClick={() => setEditingLiveProduct(null)}
                 className="p-1 text-zinc-400 hover:text-zinc-100 rounded-lg hover:bg-zinc-800"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-6 flex flex-col gap-4">
-              <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800/80 flex items-center justify-between">
+            <div className="p-5 flex flex-col gap-4">
+              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-between">
                 <div>
                   <span className="text-xs text-zinc-400 block">Current Standard Rate</span>
                   <span className="text-sm font-bold font-mono text-zinc-200">
                     ₹{Number(editingLiveProduct.rate).toFixed(2)} / {editingLiveProduct.unit || "kg"}
                   </span>
                 </div>
-                <span className="text-[11px] text-zinc-500">Dead / Fresh fish</span>
+                <span className="text-[11px] text-zinc-500">Standard</span>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1.5 flex items-center gap-1.5">
-                  <CircleDot className="w-3.5 h-3.5 text-cyan-400" />
-                  Live Fish Rate (₹ / {editingLiveProduct.unit || "kg"}) <span className="text-cyan-400">*</span>
+                <label className="label">
+                  Live Fish Rate (₹ / {editingLiveProduct.unit || "kg"})
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-cyan-400 text-sm font-bold pointer-events-none">₹</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm font-medium">₹</span>
                   <input
                     type="number"
                     step="0.01"
@@ -672,20 +775,20 @@ export default function RatesPage() {
                     placeholder="e.g. 160.00"
                     value={liveRateInput}
                     onChange={(e) => setLiveRateInput(e.target.value)}
-                    className="input-field w-full text-base pl-8 font-mono border-cyan-500/40 focus:border-cyan-400 text-cyan-300 font-bold"
+                    className="input-field pl-7 font-mono font-medium text-emerald-400"
                     autoFocus
                   />
                 </div>
-                <p className="text-[11px] text-zinc-400 mt-1.5">
-                  Applied automatically whenever Gemini AI sees a circle around this item in the ledger.
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  Applied when an item is circled ⊚ in ledger scans.
                 </p>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
                 <button
                   type="button"
                   onClick={() => setEditingLiveProduct(null)}
-                  className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+                  className="btn-secondary btn-sm"
                 >
                   Cancel
                 </button>
@@ -693,9 +796,9 @@ export default function RatesPage() {
                   type="button"
                   onClick={handleSaveLiveRate}
                   disabled={saveProductLiveRateMutation.isPending}
-                  className="btn-primary text-sm px-5 py-2 bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 border-none"
+                  className="btn-primary btn-sm"
                 >
-                  {saveProductLiveRateMutation.isPending ? "Saving..." : "Save Live Rate"}
+                  {saveProductLiveRateMutation.isPending ? "Saving..." : "Save Rate"}
                 </button>
               </div>
             </div>
@@ -703,31 +806,27 @@ export default function RatesPage() {
         </div>
       )}
 
-      {/* =================================================================== */}
-      {/* MODAL: ADD / EDIT CUSTOMER RATE                                     */}
-      {/* =================================================================== */}
+      {/* ─── MODAL: ADD / EDIT CUSTOMER RATE ───────────────────────────── */}
       {isCustModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between p-5 border-b border-zinc-800">
-              <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
-                <Package className="w-5 h-5 text-emerald-400" />
-                {editingRate ? "Edit Custom Rate" : "New Custom Rate"}
+          <div className="card w-full max-w-md animate-slide-in">
+            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+              <h3 className="text-sm font-bold text-zinc-100">
+                {editingRate ? "Edit Customer Rate" : "Add Customer Rate"}
               </h3>
               <button onClick={closeCustModal} className="p-1 text-zinc-400 hover:text-zinc-100 rounded-lg hover:bg-zinc-800">
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-6 flex flex-col gap-4">
-              {/* Customer */}
+            <div className="p-5 flex flex-col gap-4">
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1.5">
+                <label className="label">
                   Customer <span className="text-rose-400">*</span>
                 </label>
                 <select
                   value={custForm.customer_id}
                   onChange={(e) => setCustForm({ ...custForm, customer_id: e.target.value })}
-                  className="input-field w-full text-sm"
+                  className="input-field text-sm"
                   disabled={!!editingRate}
                 >
                   <option value="">— Select customer —</option>
@@ -737,15 +836,14 @@ export default function RatesPage() {
                 </select>
               </div>
 
-              {/* Product */}
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1.5">
+                <label className="label">
                   Product <span className="text-rose-400">*</span>
                 </label>
                 <select
                   value={custForm.product_id}
                   onChange={(e) => setCustForm({ ...custForm, product_id: e.target.value })}
-                  className="input-field w-full text-sm"
+                  className="input-field text-sm"
                   disabled={!!editingRate}
                 >
                   <option value="">— Select product —</option>
@@ -755,13 +853,12 @@ export default function RatesPage() {
                 </select>
               </div>
 
-              {/* Standard Rate */}
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1.5">
+                <label className="label">
                   Standard Rate (₹) <span className="text-rose-400">*</span>
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm font-medium pointer-events-none">₹</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm font-medium">₹</span>
                   <input
                     type="number"
                     step="0.01"
@@ -769,19 +866,17 @@ export default function RatesPage() {
                     placeholder="0.00"
                     value={custForm.rate}
                     onChange={(e) => setCustForm({ ...custForm, rate: e.target.value })}
-                    className="input-field w-full text-sm pl-7 font-mono"
+                    className="input-field pl-7 font-mono"
                   />
                 </div>
               </div>
 
-              {/* Live Rate (Optional) */}
               <div>
-                <label className="block text-xs font-medium text-cyan-400 mb-1.5 flex items-center gap-1.5">
-                  <CircleDot className="w-3.5 h-3.5" />
+                <label className="label">
                   Live Fish Rate (₹) <span className="text-zinc-500 font-normal">(optional override)</span>
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400 text-sm font-medium pointer-events-none">₹</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm font-medium">₹</span>
                   <input
                     type="number"
                     step="0.01"
@@ -789,20 +884,20 @@ export default function RatesPage() {
                     placeholder="Leave blank to use base live rate"
                     value={custForm.live_rate}
                     onChange={(e) => setCustForm({ ...custForm, live_rate: e.target.value })}
-                    className="input-field w-full text-sm pl-7 font-mono border-cyan-500/30 text-cyan-300"
+                    className="input-field pl-7 font-mono"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-zinc-800">
-                <button type="button" onClick={closeCustModal} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
+                <button type="button" onClick={closeCustModal} className="btn-secondary btn-sm">
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveCustRate}
                   disabled={saveCustRateMutation.isPending}
-                  className="btn-primary text-sm px-5 py-2"
+                  className="btn-primary btn-sm"
                 >
                   {saveCustRateMutation.isPending ? "Saving…" : (editingRate ? "Update Rate" : "Save Rate")}
                 </button>

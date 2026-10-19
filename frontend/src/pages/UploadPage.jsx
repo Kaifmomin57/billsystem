@@ -2,12 +2,12 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Upload as UploadIcon, FileSpreadsheet, CheckCircle2, AlertTriangle,
-  Sparkles, RefreshCw, ZoomIn, ZoomOut, Download, ArrowRight,
-  Trash2, Plus, Calendar, User, Eye, Camera, Check, ShieldAlert,
-  Maximize2, Minimize2, Receipt, IndianRupee, X, ChevronRight,
-  Users, Package, TrendingUp, RotateCw, Expand, ChevronDown, ChevronUp,
-  Search, Filter, Undo2, Redo2, SlidersHorizontal, AlertCircle, ArrowUpRight,
-  HelpCircle, Columns3, CheckCheck, Merge, ChevronLeft, Info, ScanLine, CircleDot
+  Sparkles, RefreshCw, ZoomIn, ZoomOut, ArrowRight,
+  Trash2, Plus, Calendar, Eye, Camera, Check,
+  Maximize2, Minimize2, Receipt, X, ChevronRight,
+  Package, RotateCw, Expand, ChevronDown, ChevronUp,
+  Search, Undo2, Redo2,
+  Columns3, CheckCheck, Merge, ChevronLeft, ScanLine, Move
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api, { API_BASE_URL } from "../lib/api";
@@ -171,73 +171,203 @@ function ExtractionProgressModal({ isOpen, step, onCancel }) {
 // ─── Image Lightbox Modal ────────────────────────────────────────────────────
 function LedgerImageModal({ isOpen, onClose, imageUrl, rotation, setRotation }) {
   const [modalZoom, setModalZoom] = useState(1);
+  const [modalPan, setModalPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const pinchRef = useRef({ startDist: 0, startZoom: 1 });
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen || !imageUrl) return null;
+
+  const handlePointerDown = (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    setIsDragging(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: modalPan.x,
+      panY: modalPan.y,
+    };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+  };
+
+  const handlePointerMove = (e) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    setModalPan({
+      x: dragStartRef.current.panX + dx,
+      y: dragStartRef.current.panY + dy,
+    });
+  };
+
+  const handlePointerUp = (e) => {
+    setIsDragging(false);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+  };
+
+  const handleReset = () => {
+    setModalZoom(1);
+    setModalPan({ x: 0, y: 0 });
+  };
+
+  const handleTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinchRef.current.startDist = Math.sqrt(dx * dx + dy * dy);
+      pinchRef.current.startZoom = modalZoom;
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const scale = dist / pinchRef.current.startDist;
+      const newZoom = Math.min(4, Math.max(0.5, Number((pinchRef.current.startZoom * scale).toFixed(2))));
+      setModalZoom(newZoom);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="flex items-center justify-between px-6 py-3.5 border-b border-zinc-800 bg-zinc-950/90">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-            <Eye className="w-4 h-4 text-emerald-400" />
+      {/* Responsive Header: stacks nicely on phone so close button is NEVER cut off */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between px-3 sm:px-6 py-2.5 sm:py-3.5 border-b border-zinc-800 bg-zinc-950/95 gap-2 shrink-0">
+        {/* Row 1 on mobile: Title + Visible Close Button */}
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+              <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-xs sm:text-sm font-bold text-zinc-100 truncate">
+                Ledger Photo Inspection
+              </h3>
+              <p className="text-[10px] sm:text-[11px] text-zinc-400 hidden sm:block">
+                Drag to explore · Zoom in to verify faint handwriting
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-sm font-bold text-zinc-100">Original Handwritten Ledger — High-Res Inspection</h3>
-            <p className="text-[11px] text-zinc-400">Zoom in to verify handwriting, faint pencil numbers, or circled values</p>
-          </div>
+
+          {/* Dedicated mobile close button - always right here at top right */}
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 active:bg-zinc-600 transition-colors border border-zinc-700/60 shrink-0 sm:hidden flex items-center gap-1 text-xs font-semibold"
+            title="Close"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4 text-zinc-200" />
+            <span>Close</span>
+          </button>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setModalZoom((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
-            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-            title="Zoom Out"
-          >
-            <ZoomOut className="w-4 h-4" />
-          </button>
-          <span className="text-xs font-mono font-bold text-emerald-400 px-2 min-w-[55px] text-center bg-zinc-900 border border-zinc-800 py-1 rounded">
-            {Math.round(modalZoom * 100)}%
-          </span>
-          <button
-            onClick={() => setModalZoom((z) => Math.min(3.5, Number((z + 0.25).toFixed(2))))}
-            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-            title="Zoom In"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setModalZoom(1)}
-            className="px-2.5 py-1 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors"
-          >
-            Fit Page
-          </button>
-          <div className="h-4 w-px bg-zinc-800 mx-1" />
-          <button
-            onClick={() => setRotation((r) => (r + 90) % 360)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-800 text-xs text-zinc-200 hover:bg-zinc-700 transition-colors"
-          >
-            <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
-            Rotate {rotation !== 0 ? `(${rotation}°)` : ""}
-          </button>
-          <div className="h-4 w-px bg-zinc-800 mx-1" />
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+        {/* Row 2 on mobile (Right side on desktop): Zoom / Rotate controls + Desktop Close */}
+        <div className="flex items-center justify-between sm:justify-end gap-1.5 sm:gap-2">
+          <div className="flex items-center gap-1 sm:gap-1.5">
+            <button
+              type="button"
+              onClick={() => setModalZoom((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
+              className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 active:bg-zinc-600 transition-colors"
+              title="Zoom Out"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleReset}
+              className="text-xs font-mono font-bold text-emerald-400 px-2 min-w-[50px] text-center bg-zinc-900 border border-zinc-800 py-1 rounded hover:bg-zinc-800 transition-colors"
+              title="Click to reset view"
+            >
+              {Math.round(modalZoom * 100)}%
+            </button>
+            <button
+              type="button"
+              onClick={() => setModalZoom((z) => Math.min(4, Number((z + 0.25).toFixed(2))))}
+              className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 active:bg-zinc-600 transition-colors"
+              title="Zoom In"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleReset}
+              className="px-2.5 py-1 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors"
+              title="Fit to screen"
+            >
+              Fit
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setRotation((r) => (r + 90) % 360)}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-800 text-xs text-zinc-200 hover:bg-zinc-700 transition-colors"
+            >
+              <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Rotate</span> {rotation !== 0 ? `(${rotation}°)` : ""}
+            </button>
+
+            <div className="hidden sm:block h-4 w-px bg-zinc-800 mx-0.5" />
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="hidden sm:flex p-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 transition-colors"
+              title="Close viewer (Esc)"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-4 flex items-center justify-center cursor-grab active:cursor-grabbing select-none">
+      <div
+        className={`flex-1 relative overflow-hidden p-4 flex items-center justify-center select-none ${
+          isDragging ? "cursor-grabbing" : "cursor-grab"
+        }`}
+        style={{ touchAction: "none" }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onDoubleClick={handleReset}
+      >
         <img
           src={imageUrl}
           alt="Original Ledger Page High-Res"
           style={{
-            transform: `rotate(${rotation}deg) scale(${modalZoom})`,
+            transform: `translate(${modalPan.x}px, ${modalPan.y}px) rotate(${rotation}deg) scale(${modalZoom})`,
             transformOrigin: "center center",
           }}
-          className="max-h-full max-w-full object-contain transition-transform duration-100 shadow-2xl rounded-lg"
+          className="max-h-full max-w-full object-contain pointer-events-none transition-transform duration-75 shadow-2xl rounded-lg"
+          draggable={false}
         />
+
+        {/* Floating pan/drag instruction badge */}
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-zinc-900/90 border border-zinc-700/80 backdrop-blur-md px-3.5 py-1.5 rounded-full text-xs text-zinc-300 flex items-center gap-2 pointer-events-none shadow-xl">
+          <Move className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Drag with mouse or finger to move · Double-click to reset</span>
+        </div>
       </div>
     </div>
   );
@@ -614,6 +744,16 @@ export default function UploadPage() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [desktopPan, setDesktopPan] = useState({ x: 0, y: 0 });
+  const [isDesktopDragging, setIsDesktopDragging] = useState(false);
+  const desktopDragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const [mobileZoom, setMobileZoom] = useState(1);
+  const [mobilePan, setMobilePan] = useState({ x: 0, y: 0 });
+  const [isMobileDragging, setIsMobileDragging] = useState(false);
+  const mobileDragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const [isMobileImageOpen, setIsMobileImageOpen] = useState(true);
+  const mobileImageRef = useRef(null);
+  const pinchRef = useRef({ startDist: 0, startZoom: 1 });
   const [isMappingExpanded, setIsMappingExpanded] = useState(false);
   const [selectedRowIndex, setSelectedRowIndex] = useState(null);
   const [isFullWidth, setIsFullWidth] = useState(false);
@@ -1266,55 +1406,51 @@ export default function UploadPage() {
       />
 
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2.5">
-            <Sparkles className="w-7 h-7 text-emerald-400" />
-            AI Ledger & Bill Scanner
+          <h1 className="text-lg sm:text-2xl font-bold text-zinc-100 tracking-tight">
+            Upload & Digitize Ledgers
           </h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Capture or upload handwritten ledgers — Gemini AI digitizes rows, DB resolves rates, bills are created instantly
+          <p className="text-xs sm:text-sm text-zinc-400 mt-0.5 hidden sm:block">
+            Gemini AI handwriting OCR extracts customer quantities and auto-resolves database rates
+          </p>
+          <p className="text-xs text-zinc-400 mt-0.5 sm:hidden">
+            Scan ledger photos → AI extracts data → Create bills
           </p>
         </div>
       </div>
 
       {/* Upload Dropzone Card */}
-      <div className="card p-4 sm:p-6 bg-gradient-to-b from-zinc-900 via-zinc-900/90 to-zinc-950 border-zinc-800">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-5 pb-4 border-b border-zinc-800">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Document Type:</span>
-            <div className="flex flex-wrap gap-2">
+      <div className="card p-4 sm:p-5">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-zinc-800">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-2.5 w-full sm:w-auto">
+            <span className="text-xs font-medium text-zinc-400 hidden sm:inline">Document Type:</span>
+            <div className="segmented-nav w-full sm:w-auto">
               <button
                 type="button"
                 onClick={() => setUploadType("ledger")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  uploadType === "ledger"
-                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
-                }`}
+                className={`segmented-item flex-1 sm:flex-none text-center ${uploadType === "ledger" ? "active" : ""}`}
               >
-                Ledger Page (Multi-customer)
+                <span className="hidden sm:inline">Ledger Page (Multi-customer)</span>
+                <span className="sm:hidden">Ledger Page</span>
               </button>
               <button
                 type="button"
                 onClick={() => setUploadType("bill")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  uploadType === "bill"
-                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
-                }`}
+                className={`segmented-item flex-1 sm:flex-none text-center ${uploadType === "bill" ? "active" : ""}`}
               >
-                Single Bill / Invoice
+                <span className="hidden sm:inline">Single Bill / Invoice</span>
+                <span className="sm:hidden">Single Bill</span>
               </button>
             </div>
           </div>
-          <span className="text-[11px] text-zinc-500">Supported: JPG, PNG, WEBP, Mobile Camera (up to 15MB)</span>
+          <span className="text-xs text-zinc-500 hidden sm:block">JPG, PNG, WEBP, or Camera (up to 15MB)</span>
         </div>
 
         {/* Dropzone & Camera Box */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
           <div
-            className={`md:col-span-2 border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 ${
+            className={`md:col-span-2 border-2 border-dashed rounded-2xl p-5 sm:p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 ${
               file ? "border-emerald-500/50 bg-emerald-950/10" : "border-zinc-700 hover:border-zinc-500 bg-zinc-950/40"
             }`}
             onClick={() => document.getElementById("ledger-file-input").click()}
@@ -1331,52 +1467,45 @@ export default function UploadPage() {
             />
             {file ? (
               <div className="flex flex-col items-center gap-2">
-                <CheckCircle2 className="w-10 h-10 text-emerald-400" />
-                <p className="text-sm font-semibold text-zinc-100">{file.name}</p>
+                <CheckCircle2 className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-400" />
+                <p className="text-sm font-semibold text-zinc-100 break-all">{file.name}</p>
                 <p className="text-xs text-zinc-400 font-mono">{(file.size / 1024).toFixed(1)} KB · Ready to scan</p>
-                <span className="text-xs text-emerald-400 mt-1 hover:underline">Click to pick a different image</span>
+                <span className="text-xs text-emerald-400 mt-1">Tap to change</span>
               </div>
             ) : (
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center text-zinc-400">
-                  <UploadIcon className="w-6 h-6" />
+              <div className="flex flex-col items-center gap-2.5 sm:gap-3">
+                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-zinc-800 flex items-center justify-center text-zinc-400">
+                  <UploadIcon className="w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-zinc-200">Click to browse or drag & drop handwritten ledger photo</p>
-                  <p className="text-xs text-zinc-500 mt-1">Automatic perspective enhancement, contrast tuning & rotation</p>
+                  <p className="text-sm font-semibold text-zinc-200">Tap to upload ledger photo</p>
+                  <p className="text-xs text-zinc-500 mt-1 hidden sm:block">Automatic perspective enhancement, contrast tuning & rotation</p>
+                  <p className="text-xs text-zinc-500 mt-1 sm:hidden">JPG, PNG, WEBP · up to 15MB</p>
                 </div>
               </div>
             )}
           </div>
 
           {/* Action side box */}
-          <div className="flex flex-col justify-between p-5 rounded-2xl bg-zinc-950/80 border border-zinc-800/80">
-            <div>
-              <h4 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5 mb-2">
-                <Camera className="w-4 h-4 text-emerald-400" /> Mobile Camera Capture
-              </h4>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Take a direct photo using our viewfinder guide overlay for best pencil handwriting legibility.
-              </p>
-              <button
-                type="button"
-                onClick={() => setIsCameraGuideOpen(true)}
-                className="btn-secondary w-full mt-3 text-xs py-2 flex items-center justify-center gap-1.5"
-              >
-                <Camera className="w-3.5 h-3.5 text-emerald-400" />
-                Open Camera Guide
-              </button>
-            </div>
+          <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-zinc-950/80 border border-zinc-800/80">
+            <button
+              type="button"
+              onClick={() => setIsCameraGuideOpen(true)}
+              className="btn-secondary w-full text-sm py-2.5 flex items-center justify-center gap-2"
+            >
+              <Camera className="w-4 h-4 text-emerald-400" />
+              Open Camera
+            </button>
 
             <button
               onClick={handleUploadSubmit}
               disabled={!file || isUploading}
-              className="btn-primary w-full mt-4 flex items-center justify-center gap-2 text-sm py-2.5 shadow-lg shadow-emerald-950/50 disabled:opacity-40"
+              className="btn-primary w-full flex items-center justify-center gap-2 text-sm py-2.5 shadow-lg shadow-emerald-950/50 disabled:opacity-40"
             >
               {isUploading ? (
-                <><RefreshCw className="w-4 h-4 animate-spin" />Gemini AI Analyzing...</>
+                <><RefreshCw className="w-4 h-4 animate-spin" />Analyzing...</>
               ) : (
-                <><Sparkles className="w-4 h-4" />Extract with Gemini AI</>
+                <><Sparkles className="w-4 h-4" />Extract with AI</>
               )}
             </button>
           </div>
@@ -1387,128 +1516,113 @@ export default function UploadPage() {
       {/* VERIFICATION WORKSPACE                                         */}
       {/* ============================================================= */}
       {activeDraft && (
-        <div className="card p-5 sm:p-6 border-emerald-500/30 bg-zinc-900/95 shadow-2xl animate-in fade-in duration-200 space-y-5">
+        <div className="card p-4 sm:p-6 border-emerald-500/30 bg-zinc-900/95 shadow-2xl animate-in fade-in duration-200 space-y-4 sm:space-y-5">
           {/* Workspace Header Toolbar */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 pb-3 sm:pb-4 border-b border-zinc-800">
             <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  Verification Workspace
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Review
                 </span>
-                <span className="text-xs text-zinc-400 font-mono">Upload #{activeUploadId}</span>
+                <span className="text-xs text-zinc-400 font-mono">#{activeUploadId}</span>
                 {lastSavedTime && (
-                  <span className="text-[11px] text-zinc-500 font-mono">· Saved {lastSavedTime}</span>
+                  <span className="text-[11px] text-zinc-500 font-mono hidden sm:inline">· Saved {lastSavedTime}</span>
                 )}
                 {activeUploadStatus === "saved" && (
-                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1 ${
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1 ${
                     isDraftDirty
                       ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
                       : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                   }`}>
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    {isDraftDirty ? "Modified · Pending Update" : "Bills Generated"}
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span className="hidden sm:inline">{isDraftDirty ? "Modified · Pending Update" : "Bills Generated"}</span>
+                    <span className="sm:hidden">{isDraftDirty ? "Modified" : "Done"}</span>
                   </span>
                 )}
               </div>
-              <h2 className="text-xl font-bold text-zinc-100 mt-1">Review & Verify Extracted Ledger</h2>
-              <p className="text-xs text-zinc-400">
+              <h2 className="text-base sm:text-xl font-bold text-zinc-100 mt-1">Verify Extracted Ledger</h2>
+              <p className="text-xs text-zinc-400 hidden sm:block">
                 Compare row-by-row against the original photo. Use Tab / Enter / Arrows to navigate quickly.
               </p>
             </div>
 
-            {/* Quick Actions (Date, Review Stepper, Undo/Redo) */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              {/* Review Stepper Badge */}
+            {/* Quick Actions — Row 1: Essential controls */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Review Badge */}
               {reviewItems.length > 0 ? (
-                <div className="flex items-center bg-amber-950/40 border border-amber-500/40 rounded-lg px-2.5 py-1 gap-2">
+                <div className="flex items-center bg-amber-950/40 border border-amber-500/40 rounded-lg px-2 py-1.5 gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                   <span className="text-xs font-semibold text-amber-300">
-                    Needs review: {reviewItems.length}
+                    {reviewItems.length} issues
                   </span>
-                  <div className="flex items-center gap-1 border-l border-amber-500/30 pl-2">
+                  <div className="flex items-center gap-0.5 border-l border-amber-500/30 pl-1.5">
                     <button
                       onClick={() => jumpToReviewItem("prev")}
-                      className="p-0.5 text-amber-300 hover:text-amber-100 hover:bg-amber-900/50 rounded"
-                      title="Previous review item"
+                      className="p-1 text-amber-300 hover:text-amber-100 hover:bg-amber-900/50 rounded"
                     >
-                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <span className="text-[10px] font-mono text-amber-400">
+                    <span className="text-[11px] font-mono text-amber-400 min-w-[28px] text-center">
                       {currentReviewIndex + 1}/{reviewItems.length}
                     </span>
                     <button
                       onClick={() => jumpToReviewItem("next")}
-                      className="p-0.5 text-amber-300 hover:text-amber-100 hover:bg-amber-900/50 rounded"
-                      title="Next review item"
+                      className="p-1 text-amber-300 hover:text-amber-100 hover:bg-amber-900/50 rounded"
                     >
-                      <ChevronRight className="w-3.5 h-3.5" />
+                      <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
               ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-lg">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> All Cells Verified
+                <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1.5 rounded-lg">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> All Verified
                 </span>
               )}
 
-              {/* Undo / Redo Buttons */}
+              {/* Undo / Redo */}
               <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded-lg p-0.5">
-                <button
-                  type="button"
-                  onClick={handleUndo}
-                  disabled={historyIndex <= 0}
-                  className="p-1.5 text-zinc-400 hover:text-zinc-100 disabled:opacity-30 rounded transition-colors"
-                  title="Undo (Ctrl+Z)"
-                >
-                  <Undo2 className="w-3.5 h-3.5" />
+                <button type="button" onClick={handleUndo} disabled={historyIndex <= 0}
+                  className="p-1.5 text-zinc-400 hover:text-zinc-100 disabled:opacity-30 rounded transition-colors">
+                  <Undo2 className="w-4 h-4" />
                 </button>
-                <button
-                  type="button"
-                  onClick={handleRedo}
-                  disabled={historyIndex >= draftHistory.length - 1}
-                  className="p-1.5 text-zinc-400 hover:text-zinc-100 disabled:opacity-30 rounded transition-colors"
-                  title="Redo (Ctrl+Y)"
-                >
-                  <Redo2 className="w-3.5 h-3.5" />
+                <button type="button" onClick={handleRedo} disabled={historyIndex >= draftHistory.length - 1}
+                  className="p-1.5 text-zinc-400 hover:text-zinc-100 disabled:opacity-30 rounded transition-colors">
+                  <Redo2 className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* Page Date Picker */}
-              <div className="flex items-center gap-2 bg-zinc-950 px-3 py-1.5 rounded-lg border border-zinc-800">
+              {/* Date */}
+              <div className="flex items-center gap-1.5 bg-zinc-950 px-2.5 py-1.5 rounded-lg border border-zinc-800">
                 <Calendar className="w-4 h-4 text-zinc-400" />
-                <span className="text-xs text-zinc-400 font-medium">Date:</span>
                 <input
                   type="date"
                   value={activeDate}
-                  onChange={(e) => {
-                    setActiveDate(e.target.value);
-                    setIsDraftDirty(true);
-                  }}
+                  onChange={(e) => { setActiveDate(e.target.value); setIsDraftDirty(true); }}
                   className="bg-transparent text-xs text-emerald-400 font-semibold focus:outline-none cursor-pointer"
                 />
               </div>
 
-              {/* Add Row Button */}
-              <button
-                type="button"
-                onClick={handleAddRow}
-                className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3"
-                title="Add a new customer row manually"
-              >
-                <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                Add Row
+              {/* Add Row + Merge — icons only on mobile */}
+              <button type="button" onClick={handleAddRow}
+                className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-2.5 sm:px-3">
+                <Plus className="w-4 h-4 text-emerald-400" />
+                <span className="hidden sm:inline">Add Row</span>
               </button>
 
-              {/* Merge Rows Button */}
-              <button
-                type="button"
-                onClick={() => setIsMergeModalOpen(true)}
-                className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3"
-                title="Merge duplicate or split rows"
-              >
-                <Merge className="w-3.5 h-3.5 text-zinc-400" />
-                Merge
+              <button type="button" onClick={() => setIsMergeModalOpen(true)}
+                className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-2.5 sm:px-3">
+                <Merge className="w-4 h-4 text-zinc-400" />
+                <span className="hidden sm:inline">Merge</span>
               </button>
+
+              {/* View Image on Mobile */}
+              {previewUrl && (
+                <button type="button" onClick={() => setIsLightboxOpen(true)}
+                  className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-2.5 md:hidden">
+                  <Eye className="w-4 h-4 text-emerald-400" />
+                  <span>Photo</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1617,8 +1731,8 @@ export default function UploadPage() {
           {/* SPLIT VIEW: STICKY IMAGE (LEFT) & DATA GRID (RIGHT)        */}
           {/* ========================================================= */}
           <div className={`grid grid-cols-1 ${isFullWidth ? "lg:grid-cols-1" : "lg:grid-cols-12"} gap-6`}>
-            {/* Left Column: Sticky Ledger Photo Viewer */}
-            <div className={`${isFullWidth ? "hidden" : "lg:col-span-5"} flex flex-col gap-2.5 lg:sticky lg:top-4 self-start`}>
+            {/* Left Column: Sticky Ledger Photo Viewer — HIDDEN on mobile, use lightbox */}
+            <div className={`${isFullWidth ? "hidden" : "lg:col-span-5"} hidden md:flex flex-col gap-2.5 lg:sticky lg:top-4 self-start`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
@@ -1632,6 +1746,10 @@ export default function UploadPage() {
                 </div>
 
                 <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-zinc-500 font-mono flex items-center gap-1 mr-1 hidden sm:flex">
+                    <Move className="w-3 h-3 text-emerald-400" />
+                    Drag to move
+                  </span>
                   <button
                     type="button"
                     onClick={() => setZoomLevel((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
@@ -1642,9 +1760,12 @@ export default function UploadPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setZoomLevel(1)}
+                    onClick={() => {
+                      setZoomLevel(1);
+                      setDesktopPan({ x: 0, y: 0 });
+                    }}
                     className="text-xs text-zinc-400 hover:text-emerald-400 font-mono px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors"
-                    title="Reset to Fit"
+                    title="Click to reset zoom & center"
                   >
                     {Math.round(zoomLevel * 100)}%
                   </button>
@@ -1676,28 +1797,61 @@ export default function UploadPage() {
                 </div>
               </div>
 
-              {/* Image Frame Container with Row-Linked Guide Band */}
-              <div className="relative w-full h-[380px] sm:h-[460px] lg:h-[600px] bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden flex items-center justify-center group select-none">
+              {/* Image Frame Container with Row-Linked Guide Band and Pan Dragging */}
+              <div
+                className={`relative w-full h-[380px] sm:h-[460px] lg:h-[600px] bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden flex items-center justify-center group select-none ${
+                  isDesktopDragging ? "cursor-grabbing" : "cursor-grab"
+                }`}
+                style={{ touchAction: "none" }}
+                onPointerDown={(e) => {
+                  if (e.button !== undefined && e.button !== 0) return;
+                  setIsDesktopDragging(true);
+                  desktopDragStartRef.current = {
+                    x: e.clientX,
+                    y: e.clientY,
+                    panX: desktopPan.x,
+                    panY: desktopPan.y,
+                  };
+                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+                }}
+                onPointerMove={(e) => {
+                  if (!isDesktopDragging) return;
+                  const dx = e.clientX - desktopDragStartRef.current.x;
+                  const dy = e.clientY - desktopDragStartRef.current.y;
+                  setDesktopPan({
+                    x: desktopDragStartRef.current.panX + dx,
+                    y: desktopDragStartRef.current.panY + dy,
+                  });
+                }}
+                onPointerUp={(e) => {
+                  setIsDesktopDragging(false);
+                  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+                }}
+                onPointerCancel={() => setIsDesktopDragging(false)}
+                onDoubleClick={() => {
+                  setZoomLevel(1);
+                  setDesktopPan({ x: 0, y: 0 });
+                }}
+              >
                 {previewUrl ? (
-                  <div className="w-full h-full flex items-center justify-center overflow-auto p-2 relative">
+                  <div className="w-full h-full flex items-center justify-center p-2 relative pointer-events-none">
                     <img
                       src={previewUrl}
                       alt="Ledger Preview"
                       style={{
-                        transform: `rotate(${rotation}deg) scale(${zoomLevel})`,
+                        transform: `translate(${desktopPan.x}px, ${desktopPan.y}px) rotate(${rotation}deg) scale(${zoomLevel})`,
                         transformOrigin: "center center",
                       }}
-                      onClick={() => setIsLightboxOpen(true)}
-                      className="max-h-full max-w-full object-contain rounded shadow-lg transition-transform duration-150 cursor-pointer"
-                      title="Click to view full-resolution lightbox"
+                      className="max-h-full max-w-full object-contain rounded shadow-lg transition-transform duration-75 select-none"
+                      draggable={false}
                     />
 
-                    {/* Synchronized Row-Linked Highlight Band */}
+                    {/* Synchronized Row-Linked Highlight Band that translates along with pan */}
                     {selectedRowIndex !== null && activeDraft?.rows?.length > 0 && (
                       <div
-                        className="absolute left-2 right-2 pointer-events-none transition-all duration-200 border-y-2 border-emerald-400 bg-emerald-500/25 shadow-[0_0_15px_rgba(16,185,129,0.5)] z-20"
+                        className="absolute left-2 right-2 pointer-events-none transition-all duration-150 border-y-2 border-emerald-400 bg-emerald-500/25 shadow-[0_0_15px_rgba(16,185,129,0.5)] z-20"
                         style={{
-                          top: `${Math.min(94, Math.max(2, (selectedRowIndex / activeDraft.rows.length) * 100))}%`,
+                          top: `calc(${Math.min(94, Math.max(2, (selectedRowIndex / activeDraft.rows.length) * 100))}% + ${desktopPan.y}px)`,
                           height: `${Math.max(4.5, 100 / activeDraft.rows.length)}%`,
                         }}
                       >
@@ -1715,7 +1869,7 @@ export default function UploadPage() {
                   <button
                     type="button"
                     onClick={() => setIsLightboxOpen(true)}
-                    className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 text-xs px-2.5 py-1.5 rounded-lg shadow-xl flex items-center gap-1.5"
+                    className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 text-xs px-2.5 py-1.5 rounded-lg shadow-xl flex items-center gap-1.5 z-30"
                   >
                     <Expand className="w-3.5 h-3.5 text-emerald-400" />
                     Enlarge Photo
@@ -1729,37 +1883,37 @@ export default function UploadPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2.5 text-xs">
                   <span className="font-semibold text-zinc-300 uppercase tracking-wider">
-                    Customer Entries ({activeDraft.rows?.length || 0})
+                    Entries ({activeDraft.rows?.length || 0})
                   </span>
-                  {/* Column filter toggle */}
+                  {/* Column filter toggle — desktop only */}
                   <button
                     type="button"
                     onClick={() => setShowAllColumns(!showAllColumns)}
-                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
+                    className={`hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
                       showAllColumns
                         ? "bg-zinc-800 text-zinc-200 border-zinc-700"
                         : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                     }`}
                   >
                     <Columns3 className="w-3 h-3" />
-                    {showAllColumns ? "Showing all columns" : "Compact (Active only)"}
+                    {showAllColumns ? "All columns" : "Active only"}
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="hidden md:flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setIsFullWidth(!isFullWidth)}
                     className="btn-secondary text-[11px] py-1 px-2.5 flex items-center gap-1.5"
                   >
                     {isFullWidth ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-                    {isFullWidth ? "Split View" : "Full Width Grid"}
+                    {isFullWidth ? "Split View" : "Full Width"}
                   </button>
                 </div>
               </div>
 
-              {/* Data Table */}
-              <div className="border border-zinc-800 rounded-xl overflow-x-auto bg-zinc-950/90 shadow-inner max-h-[600px] relative">
+              {/* ── Desktop Data Table ── */}
+              <div className="hidden md:block border border-zinc-800 rounded-xl overflow-x-auto bg-zinc-950/90 shadow-inner max-h-[600px] relative">
                 <table className="w-full text-left border-collapse text-xs min-w-[620px]">
                   <thead className="sticky top-0 bg-zinc-900 border-b border-zinc-800 z-30 shadow-sm">
                     <tr className="text-zinc-400 font-semibold uppercase tracking-wider">
@@ -2077,83 +2231,449 @@ export default function UploadPage() {
                   </tfoot>
                 </table>
               </div>
+
+              {/* ── Mobile Customer Cards ── */}
+              <div className="block md:hidden space-y-3.5">
+
+                {/* ── Mobile Image Viewer with Zoom ── */}
+                {previewUrl && (
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+                    {/* Image Header with Toggle + Zoom Controls */}
+                    <div className="flex items-center justify-between px-3 py-2.5 border-b border-zinc-800/60 bg-zinc-900/80">
+                      <button
+                        type="button"
+                        onClick={() => setIsMobileImageOpen(!isMobileImageOpen)}
+                        className="flex items-center gap-2 text-xs font-semibold text-zinc-200"
+                      >
+                        <Eye className="w-4 h-4 text-emerald-400" />
+                        Ledger Photo
+                        {isMobileImageOpen ? <ChevronUp className="w-3.5 h-3.5 text-zinc-400" /> : <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />}
+                      </button>
+                      {isMobileImageOpen && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setMobileZoom(z => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
+                            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 active:bg-zinc-700 transition-colors"
+                          >
+                            <ZoomOut className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMobileZoom(1);
+                              setMobilePan({ x: 0, y: 0 });
+                            }}
+                            className="text-xs text-emerald-400 font-mono font-bold px-2 py-1 rounded-lg bg-zinc-800 min-w-[44px] text-center"
+                            title="Reset zoom & center"
+                          >
+                            {Math.round(mobileZoom * 100)}%
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMobileZoom(z => Math.min(4, Number((z + 0.25).toFixed(2))))}
+                            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 active:bg-zinc-700 transition-colors"
+                          >
+                            <ZoomIn className="w-4 h-4" />
+                          </button>
+                          <div className="w-px h-5 bg-zinc-700 mx-0.5" />
+                          <button
+                            type="button"
+                            onClick={() => setRotation(r => (r + 90) % 360)}
+                            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 active:bg-zinc-700 transition-colors"
+                          >
+                            <RotateCw className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIsLightboxOpen(true)}
+                            className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 active:bg-emerald-500/25 transition-colors"
+                          >
+                            <Expand className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Zoomable & Draggable Image Area */}
+                    {isMobileImageOpen && (
+                      <div
+                        ref={mobileImageRef}
+                        className={`relative w-full h-[290px] overflow-hidden bg-zinc-950 select-none ${
+                          isMobileDragging ? "cursor-grabbing" : "cursor-grab"
+                        }`}
+                        style={{ touchAction: "none" }}
+                        onPointerDown={(e) => {
+                          if (e.button !== undefined && e.button !== 0) return;
+                          setIsMobileDragging(true);
+                          mobileDragStartRef.current = {
+                            x: e.clientX,
+                            y: e.clientY,
+                            panX: mobilePan.x,
+                            panY: mobilePan.y,
+                          };
+                          try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+                        }}
+                        onPointerMove={(e) => {
+                          if (!isMobileDragging) return;
+                          const dx = e.clientX - mobileDragStartRef.current.x;
+                          const dy = e.clientY - mobileDragStartRef.current.y;
+                          setMobilePan({
+                            x: mobileDragStartRef.current.panX + dx,
+                            y: mobileDragStartRef.current.panY + dy,
+                          });
+                        }}
+                        onPointerUp={(e) => {
+                          setIsMobileDragging(false);
+                          try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+                        }}
+                        onPointerCancel={() => setIsMobileDragging(false)}
+                        onTouchStart={(e) => {
+                          if (e.touches.length === 2) {
+                            const dx = e.touches[0].clientX - e.touches[1].clientX;
+                            const dy = e.touches[0].clientY - e.touches[1].clientY;
+                            pinchRef.current.startDist = Math.sqrt(dx * dx + dy * dy);
+                            pinchRef.current.startZoom = mobileZoom;
+                          }
+                        }}
+                        onTouchMove={(e) => {
+                          if (e.touches.length === 2) {
+                            e.preventDefault();
+                            const dx = e.touches[0].clientX - e.touches[1].clientX;
+                            const dy = e.touches[0].clientY - e.touches[1].clientY;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            const scale = dist / pinchRef.current.startDist;
+                            const newZoom = Math.min(4, Math.max(0.5, Number((pinchRef.current.startZoom * scale).toFixed(2))));
+                            setMobileZoom(newZoom);
+                          }
+                        }}
+                        onDoubleClick={() => {
+                          setMobileZoom(1);
+                          setMobilePan({ x: 0, y: 0 });
+                        }}
+                      >
+                        <div className="w-full h-full flex items-center justify-center p-2 pointer-events-none">
+                          <img
+                            src={previewUrl}
+                            alt="Ledger"
+                            style={{
+                              transform: `translate(${mobilePan.x}px, ${mobilePan.y}px) rotate(${rotation}deg) scale(${mobileZoom})`,
+                              transformOrigin: "center center",
+                            }}
+                            className="max-w-full max-h-full object-contain rounded-lg shadow-lg transition-transform duration-75 select-none"
+                            draggable={false}
+                          />
+                        </div>
+
+                        {/* Floating Drag & Reset Guide */}
+                        <div className="absolute bottom-2 left-2 pointer-events-none bg-zinc-900/85 backdrop-blur-sm border border-zinc-700/80 px-2 py-0.5 rounded-full text-[10px] text-zinc-300 flex items-center gap-1 shadow-md">
+                          <Move className="w-2.5 h-2.5 text-emerald-400" />
+                          <span>Drag to pan · 2-finger zoom</span>
+                        </div>
+
+                        {(mobilePan.x !== 0 || mobilePan.y !== 0 || mobileZoom !== 1) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMobileZoom(1);
+                              setMobilePan({ x: 0, y: 0 });
+                            }}
+                            className="absolute bottom-2 right-2 bg-zinc-900/90 text-[10px] text-emerald-400 border border-emerald-500/40 px-2 py-0.5 rounded-full shadow-md active:scale-95 transition-all"
+                          >
+                            Center
+                          </button>
+                        )}
+
+                        {/* Row tracking band on mobile that shifts with pan */}
+                        {selectedRowIndex !== null && activeDraft?.rows?.length > 0 && (
+                          <div
+                            className="absolute left-1 right-1 pointer-events-none transition-all duration-150 border-y-2 border-emerald-400 bg-emerald-500/20 z-10"
+                            style={{
+                              top: `calc(${Math.min(94, Math.max(2, (selectedRowIndex / activeDraft.rows.length) * 100))}% + ${mobilePan.y}px)`,
+                              height: `${Math.max(5, 100 / activeDraft.rows.length)}%`,
+                            }}
+                          >
+                            <div className="absolute right-1 top-0 text-[9px] font-mono font-bold text-emerald-300 bg-zinc-950/90 px-1.5 py-0.5 rounded border border-emerald-500/40">
+                              Row #{selectedRowIndex + 1}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Grand total summary strip */}
+                <div className="flex items-center justify-between bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3">
+                  <div className="text-sm font-semibold text-zinc-300">
+                    {activeDraft.rows?.filter(r => !r.skip).length} Customers
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[11px] text-zinc-500 mr-1.5">Total</span>
+                    <span className="text-base font-bold text-emerald-400 font-mono">
+                      {formatCurrency(draftStats?.grandTotal || 0)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Customer cards */}
+                {activeDraft.rows?.map((row, rIdx) => {
+                  const customerName = row.customer_name || row.customer_name_raw || "";
+                  const fuzzySuggestion = getFuzzySuggestion(customerName);
+
+                  // Calculate row total
+                  let rowTotalAmount = 0;
+                  const activeItems = [];
+                  columnCodes.forEach((code) => {
+                    const cell = row.cells?.[code];
+                    if (!cell) return;
+                    const q = parseFloat(cell.quantity);
+                    if (!q || isNaN(q) || q <= 0) return;
+                    const r = parseFloat(cell.resolved_rate ?? cell.rate) || 0;
+                    const amt = parseFloat(cell.resolved_amount) || (r ? q * r : 0);
+                    rowTotalAmount += amt;
+                    activeItems.push({ code, qty: q, rate: r, amount: amt, cell });
+                  });
+
+                  return (
+                    <div
+                      key={rIdx}
+                      className={`rounded-xl border overflow-hidden transition-all ${
+                        row.skip
+                          ? "opacity-40 border-zinc-800 bg-zinc-950"
+                          : selectedRowIndex === rIdx
+                          ? "border-emerald-500/50 bg-zinc-900 ring-1 ring-emerald-500/20"
+                          : "border-zinc-800 bg-zinc-900/80"
+                      }`}
+                    >
+                      {/* Card Header: Row #, Customer Name, Total */}
+                      <div className="p-4 pb-3 border-b border-zinc-800/60">
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <span className={`text-xs font-mono font-bold shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${
+                              selectedRowIndex === rIdx
+                                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                                : "bg-zinc-800 text-zinc-400"
+                            }`}>
+                              {rIdx + 1}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <input
+                                id={`input-customer-${rIdx}`}
+                                type="text"
+                                value={customerName}
+                                onFocus={() => setSelectedRowIndex(rIdx)}
+                                onChange={(e) => handleCustomerNameChange(rIdx, e.target.value)}
+                                placeholder="Customer Name"
+                                className="bg-zinc-950 border border-zinc-700/80 rounded-lg px-3 py-2 text-sm text-zinc-100 font-semibold w-full focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                              />
+                              {fuzzySuggestion && (
+                                <div className="mt-1.5 flex items-center justify-between text-xs bg-emerald-950/70 border border-emerald-500/30 text-emerald-300 px-2.5 py-1.5 rounded-lg">
+                                  <span>Did you mean: <b>{fuzzySuggestion.name}</b>?</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCustomerNameChange(rIdx, fuzzySuggestion.name)}
+                                    className="text-emerald-400 font-bold ml-2"
+                                  >
+                                    Use
+                                  </button>
+                                </div>
+                              )}
+                              {row.is_new_customer && !fuzzySuggestion && (
+                                <span className="text-xs text-amber-400 mt-1 block">⚡ New customer</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-base font-bold text-emerald-400 font-mono">
+                              {rowTotalAmount > 0 ? formatCurrency(rowTotalAmount) : "₹0"}
+                            </p>
+                            <p className="text-[11px] text-zinc-500">{activeItems.length} item(s)</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card Body: Product entries as clean rows */}
+                      <div className="px-4 py-3 space-y-2.5">
+                        {activeColumns.map((code) => {
+                          const cellData = row.cells?.[code] || {};
+                          const qty = cellData.quantity;
+                          const hasQty = qty !== null && qty !== undefined && qty !== "" && !isNaN(parseFloat(qty)) && parseFloat(qty) > 0;
+                          const resolvedRate = cellData.resolved_rate;
+                          const mapped = colToProductMap[code.toUpperCase()];
+                          const productName = cellData.resolved_product_name || mapped?.name || code;
+                          const conf = cellData.confidence !== undefined ? cellData.confidence : 1.0;
+                          const isLowConf = conf < 0.7 && hasQty;
+
+                          return (
+                            <div
+                              key={code}
+                              className={`flex items-center gap-3 py-2 px-3 rounded-lg border transition-colors ${
+                                isLowConf
+                                  ? "border-amber-500/30 bg-amber-950/20"
+                                  : hasQty
+                                  ? "border-zinc-700/60 bg-zinc-950/60"
+                                  : "border-zinc-800/40 bg-zinc-950/30"
+                              }`}
+                            >
+                              {/* Product label */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-bold text-sm text-zinc-100">{code}</span>
+                                  <span className="text-xs text-zinc-400 truncate">{productName !== code ? productName : ""}</span>
+                                  {(cellData.is_live || cellData.circled_value) && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">LIVE</span>
+                                  )}
+                                </div>
+                                {hasQty && resolvedRate ? (
+                                  <p className="text-xs text-zinc-500 mt-0.5 font-mono">
+                                    @₹{resolvedRate} = <span className="text-emerald-400 font-semibold">₹{(parseFloat(qty) * resolvedRate).toFixed(2)}</span>
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              {/* Quantity input */}
+                              <div className="flex items-center gap-2">
+                                <input
+                                  id={`input-cell-${rIdx}-${code}`}
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder="0"
+                                  value={qty !== null && qty !== undefined ? qty : ""}
+                                  onFocus={() => setSelectedRowIndex(rIdx)}
+                                  onChange={(e) => {
+                                    const v = e.target.value.trim();
+                                    if (v === "" || /^[0-9]*\.?[0-9]*$/.test(v)) {
+                                      handleCellChange(rIdx, code, "quantity", v === "" ? null : v);
+                                    }
+                                  }}
+                                  className={`w-16 text-center py-2 px-2 rounded-lg font-mono text-sm font-bold focus:outline-none transition-colors ${
+                                    (cellData.is_live || cellData.circled_value)
+                                      ? "bg-cyan-950/40 text-cyan-200 border-2 border-cyan-400"
+                                      : hasQty
+                                      ? "bg-zinc-900 text-zinc-100 border border-emerald-500/40"
+                                      : "bg-zinc-900/40 text-zinc-500 border border-zinc-800"
+                                  }`}
+                                />
+
+                                {/* Live toggle */}
+                                {hasQty && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleLiveCell(rIdx, code)}
+                                    className={`p-2 rounded-lg text-xs transition-all ${
+                                      cellData.is_live || cellData.circled_value
+                                        ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                                        : "bg-zinc-800 text-zinc-500 border border-zinc-700"
+                                    }`}
+                                  >
+                                    ⊚
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Card Footer: Actions */}
+                      <div className="px-4 py-3 border-t border-zinc-800/60 flex items-center justify-between">
+                        <label className="flex items-center gap-2 text-xs text-zinc-400">
+                          <input
+                            type="checkbox"
+                            checked={!!row.skip}
+                            onChange={() => toggleSkipRow(rIdx)}
+                            className="rounded border-zinc-700 bg-zinc-800 text-rose-500"
+                          />
+                          Skip row
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRow(rIdx)}
+                          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-rose-400 py-1.5 px-2.5 rounded-lg hover:bg-rose-500/10 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
           {/* ========================================================= */}
-          {/* STICKY BOTTOM ACTION BAR (Single primary CTA)              */}
+          {/* STICKY BOTTOM ACTION BAR                                    */}
           {/* ========================================================= */}
-          <div className="fixed bottom-0 left-0 right-0 z-40 bg-zinc-950/95 border-t border-zinc-800 backdrop-blur-md px-4 sm:px-8 py-3 shadow-2xl">
-            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
-              {/* Left Secondary Actions */}
-              <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="fixed bottom-0 left-0 right-0 z-40 bg-zinc-950/95 border-t border-zinc-800 backdrop-blur-md px-3 sm:px-8 py-2.5 sm:py-3 shadow-2xl">
+            <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
+              {/* Left: Secondary Actions */}
+              <div className="flex items-center gap-1.5 sm:gap-2.5">
                 <button
                   type="button"
                   onClick={() => saveDraftMutation.mutate()}
                   disabled={saveDraftMutation.isPending}
-                  className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5"
+                  className="btn-secondary text-xs py-2 px-2.5 sm:px-3 flex items-center gap-1.5"
                 >
                   {saveDraftMutation.isPending ? (
-                    <><RefreshCw className="w-3.5 h-3.5 animate-spin" />Saving...</>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                   ) : (
-                    "Save Draft"
+                    <span>Save</span>
                   )}
                 </button>
 
                 <button
                   type="button"
                   onClick={() => handleDownloadExcel()}
-                  className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5"
-                  title="Download 3-Sheet Excel (Ledger Grid, Flat Entries, Needs Review)"
+                  className="btn-secondary text-xs py-2 px-2.5 sm:px-3 items-center gap-1.5 hidden sm:flex"
                 >
                   <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                  Excel (.xlsx)
+                  Excel
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setShowBillPreview(!showBillPreview)}
-                  className={`text-xs py-2 px-3 rounded-lg border flex items-center gap-1.5 transition-all ${
+                  className={`text-xs py-2 px-2.5 sm:px-3 rounded-lg border items-center gap-1.5 transition-all hidden sm:flex ${
                     showBillPreview
                       ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                      : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200"
+                      : "bg-zinc-800 text-zinc-400 border-zinc-700"
                   }`}
                 >
                   <Receipt className="w-3.5 h-3.5" />
-                  {showBillPreview ? "Hide Preview" : "Preview Bills"}
+                  Preview
                 </button>
               </div>
 
-              {/* Right: ONE Authoritative Primary CTA */}
-              <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+              {/* Right: Primary CTA */}
+              <div className="flex items-center">
                 {activeUploadStatus === "saved" && !isDraftDirty ? (
                   <button
                     type="button"
                     disabled={true}
-                    className="text-xs sm:text-sm flex items-center justify-center gap-2 py-2.5 px-6 rounded-lg bg-zinc-800/90 text-zinc-400 border border-zinc-700/80 cursor-not-allowed w-full sm:w-auto font-medium shadow-none select-none"
-                    title="Bills have already been created for this ledger. Modify any customer name, quantity, rate, or date to re-create or update bills."
+                    className="text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 py-2.5 px-4 sm:px-6 rounded-lg bg-zinc-800/90 text-zinc-400 border border-zinc-700/80 cursor-not-allowed font-medium"
                   >
                     <CheckCheck className="w-4 h-4 text-emerald-500" />
-                    Bills Created (No new changes)
+                    <span className="hidden sm:inline">Bills Created</span>
+                    <span className="sm:hidden">Done ✓</span>
                   </button>
                 ) : (
                   <button
                     type="button"
                     onClick={() => setIsConfirmModalOpen(true)}
                     disabled={confirmMutation.isPending || !draftStats || draftStats.customerCount === 0}
-                    className="btn-primary text-xs sm:text-sm flex items-center justify-center gap-2 py-2.5 px-6 shadow-xl shadow-emerald-950/60 disabled:opacity-50 w-full sm:w-auto font-bold tracking-wide"
+                    className="btn-primary text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 py-2.5 px-4 sm:px-6 shadow-xl shadow-emerald-950/60 disabled:opacity-50 font-bold"
                   >
-                    {activeUploadStatus === "saved" ? (
-                      <>
-                        <CheckCheck className="w-4 h-4" />
-                        Update & Re-create {draftStats?.customerCount || 0} Bills · {formatCurrency(draftStats?.grandTotal || 0)}
-                      </>
-                    ) : (
-                      <>
-                        <Receipt className="w-4 h-4" />
-                        Create {draftStats?.customerCount || 0} Bills · {formatCurrency(draftStats?.grandTotal || 0)}
-                      </>
-                    )}
+                    <Receipt className="w-4 h-4" />
+                    <span className="hidden sm:inline">
+                      {activeUploadStatus === "saved"
+                        ? `Update ${draftStats?.customerCount || 0} Bills · ${formatCurrency(draftStats?.grandTotal || 0)}`
+                        : `Create ${draftStats?.customerCount || 0} Bills · ${formatCurrency(draftStats?.grandTotal || 0)}`}
+                    </span>
+                    <span className="sm:hidden">
+                      {activeUploadStatus === "saved" ? "Update" : "Create"} {draftStats?.customerCount || 0} Bills
+                    </span>
                   </button>
                 )}
               </div>
@@ -2238,134 +2758,231 @@ export default function UploadPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left min-w-[640px]">
-            <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400 font-semibold uppercase">
-                <th className="py-3 px-5">Upload / Date</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4">Ledger Content</th>
-                <th className="py-3 px-4">Created Timestamp</th>
-                <th className="py-3 px-5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/60 text-sm">
-              {filteredUploads.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="py-12 text-center text-zinc-500 text-xs">
-                    No scanned uploads found matching your filter.
-                  </td>
-                </tr>
-              ) : (
-                filteredUploads.map((u) => {
-                  const draftObj = typeof u.draft_data === "string" ? (() => {
-                    try { return JSON.parse(u.draft_data); } catch { return null; }
-                  })() : u.draft_data;
-                  const customerCount = draftObj?.rows?.filter(r => !r.skip && (r.customer_name || r.customer_name_raw)).length || 0;
+        {filteredUploads.length === 0 ? (
+          <div className="py-12 text-center text-zinc-500 text-xs">
+            No scanned uploads found matching your filter.
+          </div>
+        ) : (
+          <>
+            {/* Desktop Table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left min-w-[640px]">
+                <thead>
+                  <tr className="border-b border-zinc-800 bg-zinc-900/40 text-xs text-zinc-400 font-semibold uppercase">
+                    <th className="py-3 px-5">Upload / Date</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4">Ledger Content</th>
+                    <th className="py-3 px-4">Created Timestamp</th>
+                    <th className="py-3 px-5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/60 text-sm">
+                  {filteredUploads.map((u) => {
+                    const draftObj = typeof u.draft_data === "string" ? (() => {
+                      try { return JSON.parse(u.draft_data); } catch { return null; }
+                    })() : u.draft_data;
+                    const customerCount = draftObj?.rows?.filter(r => !r.skip && (r.customer_name || r.customer_name_raw)).length || 0;
 
-                  return (
-                    <tr
-                      key={u.id}
-                      onClick={() => openReviewWorkspace(u)}
-                      className="hover:bg-zinc-800/30 transition-colors cursor-pointer group"
-                    >
-                      <td className="py-3 px-5">
-                        <div className="flex items-center gap-3">
-                          {/* Mini Thumbnail */}
-                          {u.image_path ? (
-                            <div className="w-10 h-10 rounded-lg bg-zinc-950 border border-zinc-800 overflow-hidden shrink-0 flex items-center justify-center">
-                              <img
-                                src={u.image_path.startsWith("http") ? u.image_path : `${API_BASE_URL}${u.image_path}`}
-                                alt={`Upload ${u.id}`}
-                                className="w-full h-full object-cover"
-                                onError={(e) => { e.target.style.display = "none"; }}
-                              />
+                    return (
+                      <tr
+                        key={u.id}
+                        onClick={() => openReviewWorkspace(u)}
+                        className="hover:bg-zinc-800/30 transition-colors cursor-pointer group"
+                      >
+                        <td className="py-3 px-5">
+                          <div className="flex items-center gap-3">
+                            {/* Mini Thumbnail */}
+                            {u.image_path ? (
+                              <div className="w-10 h-10 rounded-lg bg-zinc-950 border border-zinc-800 overflow-hidden shrink-0 flex items-center justify-center">
+                                <img
+                                  src={u.image_path.startsWith("http") ? u.image_path : `${API_BASE_URL}${u.image_path}`}
+                                  alt={`Upload ${u.id}`}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => { e.target.style.display = "none"; }}
+                                />
+                              </div>
+                            ) : (
+                              <div className="w-10 h-10 rounded-lg bg-zinc-800/60 border border-zinc-700/50 flex items-center justify-center text-zinc-500 shrink-0 font-mono text-xs">
+                                #{u.id}
+                              </div>
+                            )}
+                            <div>
+                              <span className="font-semibold text-zinc-200 block text-xs">Upload #{u.id}</span>
+                              <span className="text-[11px] text-zinc-400 font-mono">
+                                {u.page_date ? formatDate(u.page_date) : "Undated page"}
+                              </span>
                             </div>
-                          ) : (
-                            <div className="w-10 h-10 rounded-lg bg-zinc-800/60 border border-zinc-700/50 flex items-center justify-center text-zinc-500 shrink-0 font-mono text-xs">
-                              #{u.id}
-                            </div>
-                          )}
-                          <div>
-                            <span className="font-semibold text-zinc-200 block text-xs">Upload #{u.id}</span>
-                            <span className="text-[11px] text-zinc-400 font-mono">
-                              {u.page_date ? formatDate(u.page_date) : "Undated page"}
-                            </span>
                           </div>
+                        </td>
+
+                        <td className="py-3 px-4">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${
+                            u.status === "saved"
+                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                              : u.status === "needs_review"
+                              ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                              : u.status === "processing"
+                              ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                              : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                          }`}>
+                            {u.status === "saved" && <CheckCircle2 className="w-3 h-3" />}
+                            {u.status === "needs_review" && <AlertTriangle className="w-3 h-3" />}
+                            {u.status.replace("_", " ")}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-4 text-xs">
+                          <span className="text-zinc-300 font-medium">{customerCount} customer(s)</span>
+                          <span className="text-zinc-500 text-[11px] block capitalize">{u.upload_type}</span>
+                        </td>
+
+                        <td className="py-3 px-4 text-xs font-mono text-zinc-400">
+                          {u.created_at ? formatDateTime(u.created_at) : "—"}
+                        </td>
+
+                        <td className="py-3 px-5 text-right">
+                          <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => openReviewWorkspace(u)}
+                              className={`text-xs py-1 px-2.5 rounded-lg flex items-center gap-1 transition-colors ${
+                                u.status === "needs_review"
+                                  ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25"
+                                  : "btn-secondary"
+                              }`}
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              {u.status === "saved" ? "View Grid" : "Review"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadExcel(u.id)}
+                              className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 rounded-lg transition-colors"
+                              title="Download Excel (.xlsx)"
+                            >
+                              <FileSpreadsheet className="w-4 h-4" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`Are you sure you want to delete Upload #${u.id}? Any associated unpaid bills will also be deleted.`)) {
+                                  deleteUploadMutation.mutate(u.id);
+                                }
+                              }}
+                              disabled={deleteUploadMutation.isPending}
+                              className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors disabled:opacity-40"
+                              title="Delete Upload"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Card List (< md) */}
+            <div className="block md:hidden space-y-3 p-3">
+              {filteredUploads.map((u) => {
+                const draftObj = typeof u.draft_data === "string" ? (() => {
+                  try { return JSON.parse(u.draft_data); } catch { return null; }
+                })() : u.draft_data;
+                const customerCount = draftObj?.rows?.filter(r => !r.skip && (r.customer_name || r.customer_name_raw)).length || 0;
+
+                return (
+                  <div
+                    key={u.id}
+                    onClick={() => openReviewWorkspace(u)}
+                    className="p-4 flex flex-col gap-3 cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900/60 active:bg-zinc-800/40 transition-colors"
+                  >
+                    {/* Top: Thumbnail + Info + Status */}
+                    <div className="flex items-center gap-3">
+                      {u.image_path ? (
+                        <div className="w-11 h-11 rounded-lg bg-zinc-950 border border-zinc-800 overflow-hidden shrink-0 flex items-center justify-center">
+                          <img
+                            src={u.image_path.startsWith("http") ? u.image_path : `${API_BASE_URL}${u.image_path}`}
+                            alt={`Upload ${u.id}`}
+                            className="w-full h-full object-cover"
+                            onError={(e) => { e.target.style.display = "none"; }}
+                          />
                         </div>
-                      </td>
-
-                      <td className="py-3 px-4">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${
-                          u.status === "saved"
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                            : u.status === "needs_review"
-                            ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                            : u.status === "processing"
-                            ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                            : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                        }`}>
-                          {u.status === "saved" && <CheckCircle2 className="w-3 h-3" />}
-                          {u.status === "needs_review" && <AlertTriangle className="w-3 h-3" />}
-                          {u.status.replace("_", " ")}
-                        </span>
-                      </td>
-
-                      <td className="py-3 px-4 text-xs">
-                        <span className="text-zinc-300 font-medium">{customerCount} customer(s)</span>
-                        <span className="text-zinc-500 text-[11px] block capitalize">{u.upload_type}</span>
-                      </td>
-
-                      <td className="py-3 px-4 text-xs font-mono text-zinc-400">
-                        {u.created_at ? formatDateTime(u.created_at) : "—"}
-                      </td>
-
-                      <td className="py-3 px-5 text-right">
-                        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => openReviewWorkspace(u)}
-                            className={`text-xs py-1 px-2.5 rounded-lg flex items-center gap-1 transition-colors ${
-                              u.status === "needs_review"
-                                ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25"
-                                : "btn-secondary"
-                            }`}
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            {u.status === "saved" ? "View Grid" : "Review"}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadExcel(u.id)}
-                            className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 rounded-lg transition-colors"
-                            title="Download Excel (.xlsx)"
-                          >
-                            <FileSpreadsheet className="w-4 h-4" />
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (window.confirm(`Are you sure you want to delete Upload #${u.id}? Any associated unpaid bills will also be deleted.`)) {
-                                deleteUploadMutation.mutate(u.id);
-                              }
-                            }}
-                            disabled={deleteUploadMutation.isPending}
-                            className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors disabled:opacity-40"
-                            title="Delete Upload"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                      ) : (
+                        <div className="w-11 h-11 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 text-xs font-mono font-bold">
+                          #{u.id}
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-zinc-200 text-sm">Upload #{u.id}</span>
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold capitalize ${
+                            u.status === "saved"
+                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                              : u.status === "needs_review"
+                              ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                              : u.status === "processing"
+                              ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                              : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                          }`}>
+                            {u.status === "saved" && <CheckCircle2 className="w-3 h-3" />}
+                            {u.status === "needs_review" && <AlertTriangle className="w-3 h-3" />}
+                            {u.status.replace("_", " ")}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 text-xs text-zinc-400">
+                          <span className="font-mono">{u.page_date ? formatDate(u.page_date) : "Undated"}</span>
+                          <span>·</span>
+                          <span>{customerCount} customer(s)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Bottom: Actions */}
+                    <div className="flex items-center justify-between pt-1 border-t border-zinc-800/50" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => openReviewWorkspace(u)}
+                        className={`text-sm py-2 px-4 rounded-lg flex items-center gap-2 transition-colors font-medium ${
+                          u.status === "needs_review"
+                            ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                            : "btn-secondary"
+                        }`}
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>{u.status === "saved" ? "View" : "Review"}</span>
+                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadExcel(u.id)}
+                          className="p-2.5 text-zinc-300 hover:text-emerald-400 bg-zinc-800 rounded-lg active:scale-95 transition-all border border-zinc-700/50"
+                        >
+                          <FileSpreadsheet className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`Delete Upload #${u.id}?`)) {
+                              deleteUploadMutation.mutate(u.id);
+                            }
+                          }}
+                          className="p-2.5 text-zinc-400 hover:text-rose-400 bg-zinc-800 rounded-lg active:scale-95 transition-all border border-zinc-700/50"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

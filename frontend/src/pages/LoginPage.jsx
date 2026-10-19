@@ -36,20 +36,20 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-zinc-950 flex items-center justify-center px-4">
-      <div className="w-full max-w-sm animate-slide-in">
+    <div className="min-h-[100dvh] bg-zinc-950 flex items-center justify-center px-5 py-10">
+      <div className="w-full max-w-md animate-slide-in">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center mb-4 shadow-glow">
-            <Receipt size={24} weight="bold" className="text-white" />
+          <div className="w-14 h-14 rounded-2xl bg-emerald-600 flex items-center justify-center mb-5 shadow-glow">
+            <Receipt size={27} weight="bold" className="text-white" />
           </div>
-          <h1 className="text-xl font-bold text-zinc-100">Sign in to BillTrack</h1>
-          <p className="text-sm text-zinc-500 mt-1">Billing Management System</p>
+          <h1 className="text-2xl font-bold text-zinc-100">Welcome back</h1>
+          <p className="text-base text-zinc-400 mt-2">Sign in to manage your billing with confidence.</p>
         </div>
 
         {/* Form */}
-        <div className="card p-6">
-          <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+        <div className="card p-6 sm:p-8">
+          <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
             <div className="input-group">
               <label className="label">Username</label>
               <input
@@ -74,7 +74,8 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShowPw((p) => !p)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 min-h-10 min-w-10 text-zinc-400 hover:text-zinc-200 transition-colors rounded-lg"
+                  aria-label={showPw ? "Hide password" : "Show password"}
                 >
                   {showPw ? <EyeSlash size={16} /> : <Eye size={16} />}
                 </button>
@@ -97,8 +98,8 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-xs text-zinc-600 mt-4">
-          BillTrack v1.0 — Internal Use Only
+        <p className="text-center text-sm text-zinc-500 mt-5">
+          Secure billing management for your business
         </p>
       </div>
     </div>
