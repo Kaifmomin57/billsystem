@@ -203,6 +203,7 @@ class BillOut(BaseModel):
     created_at: datetime
     items: List[BillItemOut] = []
     payment_history: List[PaymentInstallmentOut] = []
+    previous_bills: List[Dict[str, Any]] = []
     class Config:
         from_attributes = True
 

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import {
   HouseSimple, Users, Package, CurrencyCircleDollar,
   Receipt, ChartBar, CloudArrowUp,
-  SignOut, Gear, List, X, Storefront
+  SignOut, Gear, List, X, Storefront, Printer
 } from "@phosphor-icons/react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { authStorage } from "../lib/auth";
@@ -13,6 +13,7 @@ const NAV_SECTIONS = [
     items: [
       { label: "Dashboard", icon: HouseSimple, to: "/" },
       { label: "Bills & Invoices", icon: Receipt, to: "/bills" },
+      { label: "Thermal Printer", icon: Printer, to: "/printer" },
       { label: "Upload Ledger", icon: CloudArrowUp, to: "/upload" },
     ],
   },

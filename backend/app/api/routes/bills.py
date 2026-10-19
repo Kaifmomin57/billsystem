@@ -58,6 +58,16 @@ def _format_bill_out(bill, db):
     prev_bills_db = _get_previous_unpaid_bills(bill, db)
     prev_balance = sum(float(pb.balance_due or 0) for pb in prev_bills_db)
     total_due_cf = bal + prev_balance
+    prev_bills_out = [
+        {
+            "bill_no": pb.bill_no or f"INV-{pb.id}",
+            "bill_date": pb.bill_date,
+            "total_amount": float(pb.total_amount or 0),
+            "amount_paid": float(pb.amount_paid or 0),
+            "balance_due": float(pb.balance_due or 0),
+        }
+        for pb in prev_bills_db
+    ]
     return BillOut(
         id=bill.id, customer_id=bill.customer_id,
         customer_name=cust.name if cust else None,
@@ -70,7 +80,8 @@ def _format_bill_out(bill, db):
         payment_status=p_status, payment_method=bill.payment_method or "Cash",
         source=bill.source, upload_id=bill.upload_id, image_path=bill.image_path,
         status=bill.status, created_at=bill.created_at,
-        items=items_out, payment_history=history_out
+        items=items_out, payment_history=history_out,
+        previous_bills=prev_bills_out
     )
 
 @router.get("", response_model=List[BillOut])

@@ -133,13 +133,12 @@ function ExtractionProgressModal({ isOpen, step, onCancel }) {
 
             return (
               <div key={idx} className="flex items-start gap-3.5">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-all ${
-                  isCompleted
-                    ? "bg-emerald-500 text-zinc-950"
-                    : isCurrent
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-all ${isCompleted
+                  ? "bg-emerald-500 text-zinc-950"
+                  : isCurrent
                     ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/60 ring-2 ring-emerald-500/30 animate-pulse"
                     : "bg-zinc-800 text-zinc-500 border border-zinc-700"
-                }`}>
+                  }`}>
                   {isCompleted ? <Check className="w-3.5 h-3.5" /> : idx + 1}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -199,7 +198,7 @@ function LedgerImageModal({ isOpen, onClose, imageUrl, rotation, setRotation }) 
     };
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {}
+    } catch { }
   };
 
   const handlePointerMove = (e) => {
@@ -216,7 +215,7 @@ function LedgerImageModal({ isOpen, onClose, imageUrl, rotation, setRotation }) 
     setIsDragging(false);
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {}
+    } catch { }
   };
 
   const handleReset = () => {
@@ -340,9 +339,8 @@ function LedgerImageModal({ isOpen, onClose, imageUrl, rotation, setRotation }) 
       </div>
 
       <div
-        className={`flex-1 relative overflow-hidden p-4 flex items-center justify-center select-none ${
-          isDragging ? "cursor-grabbing" : "cursor-grab"
-        }`}
+        className={`flex-1 relative overflow-hidden p-4 flex items-center justify-center select-none ${isDragging ? "cursor-grabbing" : "cursor-grab"
+          }`}
         style={{ touchAction: "none" }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -1200,7 +1198,7 @@ export default function UploadPage() {
           page_date: activeDate,
           draft_data: activeDraft,
         });
-      } catch (_) {}
+      } catch (_) { }
       return api.post(`/uploads/${activeUploadId}/confirm`);
     },
     onSuccess: (res) => {
@@ -1450,9 +1448,8 @@ export default function UploadPage() {
         {/* Dropzone & Camera Box */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
           <div
-            className={`md:col-span-2 border-2 border-dashed rounded-2xl p-5 sm:p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 ${
-              file ? "border-emerald-500/50 bg-emerald-950/10" : "border-zinc-700 hover:border-zinc-500 bg-zinc-950/40"
-            }`}
+            className={`md:col-span-2 border-2 border-dashed rounded-2xl p-5 sm:p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 ${file ? "border-emerald-500/50 bg-emerald-950/10" : "border-zinc-700 hover:border-zinc-500 bg-zinc-950/40"
+              }`}
             onClick={() => document.getElementById("ledger-file-input").click()}
           >
             <input
@@ -1529,11 +1526,10 @@ export default function UploadPage() {
                   <span className="text-[11px] text-zinc-500 font-mono hidden sm:inline">· Saved {lastSavedTime}</span>
                 )}
                 {activeUploadStatus === "saved" && (
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1 ${
-                    isDraftDirty
-                      ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                      : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                  }`}>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1 ${isDraftDirty
+                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                    : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                    }`}>
                     <CheckCircle2 className="w-3 h-3" />
                     <span className="hidden sm:inline">{isDraftDirty ? "Modified · Pending Update" : "Bills Generated"}</span>
                     <span className="sm:hidden">{isDraftDirty ? "Modified" : "Done"}</span>
@@ -1632,11 +1628,10 @@ export default function UploadPage() {
               <div className="flex items-center gap-2">
                 <Package className="w-4 h-4 text-emerald-400" />
                 <span className="text-xs font-bold text-zinc-200">Ledger Column Products & Rates</span>
-                <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                  columnCodes.every(c => colToProductMap[c.toUpperCase()])
-                    ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
-                    : "bg-amber-500/15 text-amber-400 border border-amber-500/30"
-                }`}>
+                <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${columnCodes.every(c => colToProductMap[c.toUpperCase()])
+                  ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                  : "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                  }`}>
                   {columnCodes.filter(c => colToProductMap[c.toUpperCase()]).length}/{columnCodes.length} mapped
                 </span>
               </div>
@@ -1663,11 +1658,10 @@ export default function UploadPage() {
                       key={code}
                       type="button"
                       onClick={() => setIsMappingExpanded(true)}
-                      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-mono border transition-all ${
-                        mapped
-                          ? "bg-zinc-900 border-emerald-500/30 text-emerald-300 hover:border-emerald-500/60"
-                          : "bg-amber-950/20 border-amber-500/30 text-amber-300 hover:border-amber-500/60"
-                      }`}
+                      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-mono border transition-all ${mapped
+                        ? "bg-zinc-900 border-emerald-500/30 text-emerald-300 hover:border-emerald-500/60"
+                        : "bg-amber-950/20 border-amber-500/30 text-amber-300 hover:border-amber-500/60"
+                        }`}
                       title={mapped ? `Column ${code} mapped to ${mapped.name}` : `Column ${code} unmapped - click to map`}
                     >
                       <span className="font-bold text-zinc-100">{code}</span>
@@ -1687,11 +1681,10 @@ export default function UploadPage() {
                   return (
                     <div
                       key={code}
-                      className={`flex items-center gap-2 p-2 rounded-lg border text-xs ${
-                        mapped
-                          ? "bg-zinc-900 border-emerald-500/30"
-                          : "bg-amber-950/20 border-amber-500/30"
-                      }`}
+                      className={`flex items-center gap-2 p-2 rounded-lg border text-xs ${mapped
+                        ? "bg-zinc-900 border-emerald-500/30"
+                        : "bg-amber-950/20 border-amber-500/30"
+                        }`}
                     >
                       <span className="font-mono font-bold px-2 py-1 rounded bg-zinc-800 text-zinc-100 text-xs">
                         {code}
@@ -1707,11 +1700,10 @@ export default function UploadPage() {
                             });
                           }
                         }}
-                        className={`bg-zinc-900 border rounded px-2 py-1 text-xs focus:outline-none focus:border-emerald-500 w-full truncate cursor-pointer ${
-                          mapped
-                            ? "border-emerald-500/40 text-emerald-300 font-semibold"
-                            : "border-amber-500/40 text-amber-400"
-                        }`}
+                        className={`bg-zinc-900 border rounded px-2 py-1 text-xs focus:outline-none focus:border-emerald-500 w-full truncate cursor-pointer ${mapped
+                          ? "border-emerald-500/40 text-emerald-300 font-semibold"
+                          : "border-amber-500/40 text-amber-400"
+                          }`}
                       >
                         <option value="">-- Map Product --</option>
                         {products.map((p) => (
@@ -1746,46 +1738,6 @@ export default function UploadPage() {
                 </div>
 
                 <div className="flex items-center gap-1">
-                  <span className="text-[11px] text-zinc-500 font-mono flex items-center gap-1 mr-1 hidden sm:flex">
-                    <Move className="w-3 h-3 text-emerald-400" />
-                    Drag to move
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setZoomLevel((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
-                    className="p-1 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-                    title="Zoom Out"
-                  >
-                    <ZoomOut className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setZoomLevel(1);
-                      setDesktopPan({ x: 0, y: 0 });
-                    }}
-                    className="text-xs text-zinc-400 hover:text-emerald-400 font-mono px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors"
-                    title="Click to reset zoom & center"
-                  >
-                    {Math.round(zoomLevel * 100)}%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setZoomLevel((z) => Math.min(3.5, Number((z + 0.25).toFixed(2))))}
-                    className="p-1 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-                    title="Zoom In"
-                  >
-                    <ZoomIn className="w-3.5 h-3.5" />
-                  </button>
-                  <div className="h-4 w-px bg-zinc-800 mx-0.5" />
-                  <button
-                    type="button"
-                    onClick={() => setRotation((r) => (r + 90) % 360)}
-                    className="p-1 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-                    title="Rotate 90° Clockwise"
-                  >
-                    <RotateCw className="w-3.5 h-3.5" />
-                  </button>
                   <button
                     type="button"
                     onClick={() => setIsLightboxOpen(true)}
@@ -1799,9 +1751,8 @@ export default function UploadPage() {
 
               {/* Image Frame Container with Row-Linked Guide Band and Pan Dragging */}
               <div
-                className={`relative w-full h-[380px] sm:h-[460px] lg:h-[600px] bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden flex items-center justify-center group select-none ${
-                  isDesktopDragging ? "cursor-grabbing" : "cursor-grab"
-                }`}
+                className={`relative w-full h-[380px] sm:h-[460px] lg:h-[600px] bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden flex items-center justify-center group select-none ${isDesktopDragging ? "cursor-grabbing" : "cursor-grab"
+                  }`}
                 style={{ touchAction: "none" }}
                 onPointerDown={(e) => {
                   if (e.button !== undefined && e.button !== 0) return;
@@ -1812,7 +1763,7 @@ export default function UploadPage() {
                     panX: desktopPan.x,
                     panY: desktopPan.y,
                   };
-                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch { }
                 }}
                 onPointerMove={(e) => {
                   if (!isDesktopDragging) return;
@@ -1825,7 +1776,7 @@ export default function UploadPage() {
                 }}
                 onPointerUp={(e) => {
                   setIsDesktopDragging(false);
-                  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+                  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { }
                 }}
                 onPointerCancel={() => setIsDesktopDragging(false)}
                 onDoubleClick={() => {
@@ -1889,11 +1840,10 @@ export default function UploadPage() {
                   <button
                     type="button"
                     onClick={() => setShowAllColumns(!showAllColumns)}
-                    className={`hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
-                      showAllColumns
-                        ? "bg-zinc-800 text-zinc-200 border-zinc-700"
-                        : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                    }`}
+                    className={`hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${showAllColumns
+                      ? "bg-zinc-800 text-zinc-200 border-zinc-700"
+                      : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                      }`}
                   >
                     <Columns3 className="w-3 h-3" />
                     {showAllColumns ? "All columns" : "Active only"}
@@ -1977,25 +1927,22 @@ export default function UploadPage() {
                         <tr
                           key={rIdx}
                           onClick={() => setSelectedRowIndex(rIdx)}
-                          className={`transition-colors cursor-pointer ${
-                            row.skip
-                              ? "opacity-35 bg-zinc-950"
-                              : isSelected
+                          className={`transition-colors cursor-pointer ${row.skip
+                            ? "opacity-35 bg-zinc-950"
+                            : isSelected
                               ? "bg-emerald-950/40 ring-1 ring-inset ring-emerald-500/50"
                               : "hover:bg-zinc-800/40 bg-zinc-950"
-                          }`}
+                            }`}
                         >
                           {/* Sticky # */}
-                          <td className={`sticky left-0 z-10 py-2.5 px-3 font-mono text-center border-r border-zinc-800/80 ${
-                            isSelected ? "bg-emerald-950/90 text-emerald-300 font-bold" : "bg-zinc-900 text-zinc-500"
-                          }`}>
+                          <td className={`sticky left-0 z-10 py-2.5 px-3 font-mono text-center border-r border-zinc-800/80 ${isSelected ? "bg-emerald-950/90 text-emerald-300 font-bold" : "bg-zinc-900 text-zinc-500"
+                            }`}>
                             {rIdx + 1}
                           </td>
 
                           {/* Sticky Customer Name Column with Autocomplete Suggestion */}
-                          <td className={`sticky left-10 z-10 py-2 px-3 border-r border-zinc-800 shadow-[4px_0_12px_rgba(0,0,0,0.5)] ${
-                            isSelected ? "bg-emerald-950/90" : "bg-zinc-900"
-                          }`}>
+                          <td className={`sticky left-10 z-10 py-2 px-3 border-r border-zinc-800 shadow-[4px_0_12px_rgba(0,0,0,0.5)] ${isSelected ? "bg-emerald-950/90" : "bg-zinc-900"
+                            }`}>
                             <div className="relative">
                               <input
                                 id={`input-customer-${rIdx}`}
@@ -2065,9 +2012,8 @@ export default function UploadPage() {
                             return (
                               <td
                                 key={code}
-                                className={`py-1.5 px-1 text-center border-x border-zinc-900/60 ${
-                                  isVeryLow ? "bg-rose-950/40" : isLowConf ? "bg-amber-950/30" : ""
-                                }`}
+                                className={`py-1.5 px-1 text-center border-x border-zinc-900/60 ${isVeryLow ? "bg-rose-950/40" : isLowConf ? "bg-amber-950/30" : ""
+                                  }`}
                               >
                                 <div className="flex flex-col items-center gap-0.5">
                                   <input
@@ -2096,17 +2042,16 @@ export default function UploadPage() {
                                         handleCellChange(rIdx, code, "quantity", v === "" ? null : v);
                                       }
                                     }}
-                                    className={`w-14 text-center py-1 px-1 rounded font-mono text-xs focus:outline-none transition-colors ${
-                                      isVeryLow
-                                        ? "bg-rose-950/50 text-rose-200 border border-rose-500/60 font-bold"
-                                        : isLowConf
+                                    className={`w-14 text-center py-1 px-1 rounded font-mono text-xs focus:outline-none transition-colors ${isVeryLow
+                                      ? "bg-rose-950/50 text-rose-200 border border-rose-500/60 font-bold"
+                                      : isLowConf
                                         ? "bg-amber-900/30 text-amber-200 border border-amber-500/50"
                                         : (cellData.is_live || cellData.circled_value)
-                                        ? "bg-cyan-950/40 text-cyan-200 border-2 border-cyan-400 font-bold focus:border-cyan-300 ring-1 ring-cyan-500/30 shadow-sm"
-                                        : hasQty
-                                        ? "bg-zinc-900 text-zinc-100 border border-emerald-500/40 font-bold focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                                        : "bg-zinc-900/40 text-zinc-500 border border-zinc-800/80 focus:border-zinc-600"
-                                    }`}
+                                          ? "bg-cyan-950/40 text-cyan-200 border-2 border-cyan-400 font-bold focus:border-cyan-300 ring-1 ring-cyan-500/30 shadow-sm"
+                                          : hasQty
+                                            ? "bg-zinc-900 text-zinc-100 border border-emerald-500/40 font-bold focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                            : "bg-zinc-900/40 text-zinc-500 border border-zinc-800/80 focus:border-zinc-600"
+                                      }`}
                                     title={cellData.raw_text ? `OCR read: "${cellData.raw_text}" (conf: ${Math.round(conf * 100)}%)` : undefined}
                                   />
 
@@ -2116,11 +2061,10 @@ export default function UploadPage() {
                                       {resolvedRate !== undefined && resolvedRate !== null ? (
                                         <div className="flex flex-col items-center leading-tight">
                                           <span
-                                            className={`text-[10px] font-mono font-bold ${
-                                              cellData.is_live || cellData.circled_value
-                                                ? "text-cyan-400"
-                                                : "text-emerald-400"
-                                            }`}
+                                            className={`text-[10px] font-mono font-bold ${cellData.is_live || cellData.circled_value
+                                              ? "text-cyan-400"
+                                              : "text-emerald-400"
+                                              }`}
                                             title={`${resolvedProduct || ""} @ ₹${resolvedRate} = ₹${(parseFloat(qty) * resolvedRate).toFixed(2)}${cellData.is_live ? " (Live Fish Rate)" : ""}`}
                                           >
                                             @{resolvedRate}{cellData.is_live || cellData.circled_value ? " ⊚" : ""}
@@ -2143,11 +2087,10 @@ export default function UploadPage() {
                                           e.stopPropagation();
                                           toggleLiveCell(rIdx, code);
                                         }}
-                                        className={`px-1 py-0.2 rounded text-[10px] font-bold transition-all ${
-                                          cellData.is_live || cellData.circled_value
-                                            ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-950 hover:bg-cyan-500/30"
-                                            : "text-zinc-600 hover:text-cyan-400 hover:bg-zinc-800"
-                                        }`}
+                                        className={`px-1 py-0.2 rounded text-[10px] font-bold transition-all ${cellData.is_live || cellData.circled_value
+                                          ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-950 hover:bg-cyan-500/30"
+                                          : "text-zinc-600 hover:text-cyan-400 hover:bg-zinc-800"
+                                          }`}
                                         title={cellData.is_live || cellData.circled_value ? "Live Fish (circled). Click to switch to normal rate" : "Click to mark as Live Fish (circled rate)"}
                                       >
                                         ⊚ {cellData.is_live || cellData.circled_value ? "LIVE" : "live?"}
@@ -2299,9 +2242,8 @@ export default function UploadPage() {
                     {isMobileImageOpen && (
                       <div
                         ref={mobileImageRef}
-                        className={`relative w-full h-[290px] overflow-hidden bg-zinc-950 select-none ${
-                          isMobileDragging ? "cursor-grabbing" : "cursor-grab"
-                        }`}
+                        className={`relative w-full h-[290px] overflow-hidden bg-zinc-950 select-none ${isMobileDragging ? "cursor-grabbing" : "cursor-grab"
+                          }`}
                         style={{ touchAction: "none" }}
                         onPointerDown={(e) => {
                           if (e.button !== undefined && e.button !== 0) return;
@@ -2312,7 +2254,7 @@ export default function UploadPage() {
                             panX: mobilePan.x,
                             panY: mobilePan.y,
                           };
-                          try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+                          try { e.currentTarget.setPointerCapture(e.pointerId); } catch { }
                         }}
                         onPointerMove={(e) => {
                           if (!isMobileDragging) return;
@@ -2325,7 +2267,7 @@ export default function UploadPage() {
                         }}
                         onPointerUp={(e) => {
                           setIsMobileDragging(false);
-                          try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+                          try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { }
                         }}
                         onPointerCancel={() => setIsMobileDragging(false)}
                         onTouchStart={(e) => {
@@ -2438,23 +2380,21 @@ export default function UploadPage() {
                   return (
                     <div
                       key={rIdx}
-                      className={`rounded-xl border overflow-hidden transition-all ${
-                        row.skip
-                          ? "opacity-40 border-zinc-800 bg-zinc-950"
-                          : selectedRowIndex === rIdx
+                      className={`rounded-xl border overflow-hidden transition-all ${row.skip
+                        ? "opacity-40 border-zinc-800 bg-zinc-950"
+                        : selectedRowIndex === rIdx
                           ? "border-emerald-500/50 bg-zinc-900 ring-1 ring-emerald-500/20"
                           : "border-zinc-800 bg-zinc-900/80"
-                      }`}
+                        }`}
                     >
                       {/* Card Header: Row #, Customer Name, Total */}
                       <div className="p-4 pb-3 border-b border-zinc-800/60">
                         <div className="flex items-start justify-between gap-3 mb-3">
                           <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                            <span className={`text-xs font-mono font-bold shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${
-                              selectedRowIndex === rIdx
-                                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                                : "bg-zinc-800 text-zinc-400"
-                            }`}>
+                            <span className={`text-xs font-mono font-bold shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${selectedRowIndex === rIdx
+                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                              : "bg-zinc-800 text-zinc-400"
+                              }`}>
                               {rIdx + 1}
                             </span>
                             <div className="flex-1 min-w-0">
@@ -2508,13 +2448,12 @@ export default function UploadPage() {
                           return (
                             <div
                               key={code}
-                              className={`flex items-center gap-3 py-2 px-3 rounded-lg border transition-colors ${
-                                isLowConf
-                                  ? "border-amber-500/30 bg-amber-950/20"
-                                  : hasQty
+                              className={`flex items-center gap-3 py-2 px-3 rounded-lg border transition-colors ${isLowConf
+                                ? "border-amber-500/30 bg-amber-950/20"
+                                : hasQty
                                   ? "border-zinc-700/60 bg-zinc-950/60"
                                   : "border-zinc-800/40 bg-zinc-950/30"
-                              }`}
+                                }`}
                             >
                               {/* Product label */}
                               <div className="flex-1 min-w-0">
@@ -2547,13 +2486,12 @@ export default function UploadPage() {
                                       handleCellChange(rIdx, code, "quantity", v === "" ? null : v);
                                     }
                                   }}
-                                  className={`w-16 text-center py-2 px-2 rounded-lg font-mono text-sm font-bold focus:outline-none transition-colors ${
-                                    (cellData.is_live || cellData.circled_value)
-                                      ? "bg-cyan-950/40 text-cyan-200 border-2 border-cyan-400"
-                                      : hasQty
+                                  className={`w-16 text-center py-2 px-2 rounded-lg font-mono text-sm font-bold focus:outline-none transition-colors ${(cellData.is_live || cellData.circled_value)
+                                    ? "bg-cyan-950/40 text-cyan-200 border-2 border-cyan-400"
+                                    : hasQty
                                       ? "bg-zinc-900 text-zinc-100 border border-emerald-500/40"
                                       : "bg-zinc-900/40 text-zinc-500 border border-zinc-800"
-                                  }`}
+                                    }`}
                                 />
 
                                 {/* Live toggle */}
@@ -2561,11 +2499,10 @@ export default function UploadPage() {
                                   <button
                                     type="button"
                                     onClick={() => toggleLiveCell(rIdx, code)}
-                                    className={`p-2 rounded-lg text-xs transition-all ${
-                                      cellData.is_live || cellData.circled_value
-                                        ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
-                                        : "bg-zinc-800 text-zinc-500 border border-zinc-700"
-                                    }`}
+                                    className={`p-2 rounded-lg text-xs transition-all ${cellData.is_live || cellData.circled_value
+                                      ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                                      : "bg-zinc-800 text-zinc-500 border border-zinc-700"
+                                      }`}
                                   >
                                     ⊚
                                   </button>
@@ -2635,11 +2572,10 @@ export default function UploadPage() {
                 <button
                   type="button"
                   onClick={() => setShowBillPreview(!showBillPreview)}
-                  className={`text-xs py-2 px-2.5 sm:px-3 rounded-lg border items-center gap-1.5 transition-all hidden sm:flex ${
-                    showBillPreview
-                      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                      : "bg-zinc-800 text-zinc-400 border-zinc-700"
-                  }`}
+                  className={`text-xs py-2 px-2.5 sm:px-3 rounded-lg border items-center gap-1.5 transition-all hidden sm:flex ${showBillPreview
+                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                    : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                    }`}
                 >
                   <Receipt className="w-3.5 h-3.5" />
                   Preview
@@ -2722,27 +2658,24 @@ export default function UploadPage() {
               <button
                 type="button"
                 onClick={() => setHistoryFilter("all")}
-                className={`px-2.5 py-1 rounded-md transition-colors ${
-                  historyFilter === "all" ? "bg-zinc-800 text-zinc-100 font-semibold" : "text-zinc-400 hover:text-zinc-200"
-                }`}
+                className={`px-2.5 py-1 rounded-md transition-colors ${historyFilter === "all" ? "bg-zinc-800 text-zinc-100 font-semibold" : "text-zinc-400 hover:text-zinc-200"
+                  }`}
               >
                 All ({uploads.length})
               </button>
               <button
                 type="button"
                 onClick={() => setHistoryFilter("needs_review")}
-                className={`px-2.5 py-1 rounded-md flex items-center gap-1 transition-colors ${
-                  historyFilter === "needs_review" ? "bg-amber-500/20 text-amber-300 font-semibold" : "text-zinc-400 hover:text-amber-300"
-                }`}
+                className={`px-2.5 py-1 rounded-md flex items-center gap-1 transition-colors ${historyFilter === "needs_review" ? "bg-amber-500/20 text-amber-300 font-semibold" : "text-zinc-400 hover:text-amber-300"
+                  }`}
               >
                 Needs Review ({needsReviewCount})
               </button>
               <button
                 type="button"
                 onClick={() => setHistoryFilter("saved")}
-                className={`px-2.5 py-1 rounded-md transition-colors ${
-                  historyFilter === "saved" ? "bg-emerald-500/20 text-emerald-300 font-semibold" : "text-zinc-400 hover:text-emerald-300"
-                }`}
+                className={`px-2.5 py-1 rounded-md transition-colors ${historyFilter === "saved" ? "bg-emerald-500/20 text-emerald-300 font-semibold" : "text-zinc-400 hover:text-emerald-300"
+                  }`}
               >
                 Saved ({savedCount})
               </button>
@@ -2816,15 +2749,14 @@ export default function UploadPage() {
                         </td>
 
                         <td className="py-3 px-4">
-                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${
-                            u.status === "saved"
-                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                              : u.status === "needs_review"
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${u.status === "saved"
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                            : u.status === "needs_review"
                               ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                               : u.status === "processing"
-                              ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                              : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                          }`}>
+                                ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                                : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                            }`}>
                             {u.status === "saved" && <CheckCircle2 className="w-3 h-3" />}
                             {u.status === "needs_review" && <AlertTriangle className="w-3 h-3" />}
                             {u.status.replace("_", " ")}
@@ -2845,11 +2777,10 @@ export default function UploadPage() {
                             <button
                               type="button"
                               onClick={() => openReviewWorkspace(u)}
-                              className={`text-xs py-1 px-2.5 rounded-lg flex items-center gap-1 transition-colors ${
-                                u.status === "needs_review"
-                                  ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25"
-                                  : "btn-secondary"
-                              }`}
+                              className={`text-xs py-1 px-2.5 rounded-lg flex items-center gap-1 transition-colors ${u.status === "needs_review"
+                                ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25"
+                                : "btn-secondary"
+                                }`}
                             >
                               <Eye className="w-3.5 h-3.5" />
                               {u.status === "saved" ? "View Grid" : "Review"}
@@ -2919,15 +2850,14 @@ export default function UploadPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <span className="font-semibold text-zinc-200 text-sm">Upload #{u.id}</span>
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold capitalize ${
-                            u.status === "saved"
-                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                              : u.status === "needs_review"
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold capitalize ${u.status === "saved"
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                            : u.status === "needs_review"
                               ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                               : u.status === "processing"
-                              ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                              : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                          }`}>
+                                ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                                : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                            }`}>
                             {u.status === "saved" && <CheckCircle2 className="w-3 h-3" />}
                             {u.status === "needs_review" && <AlertTriangle className="w-3 h-3" />}
                             {u.status.replace("_", " ")}
@@ -2946,11 +2876,10 @@ export default function UploadPage() {
                       <button
                         type="button"
                         onClick={() => openReviewWorkspace(u)}
-                        className={`text-sm py-2 px-4 rounded-lg flex items-center gap-2 transition-colors font-medium ${
-                          u.status === "needs_review"
-                            ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                            : "btn-secondary"
-                        }`}
+                        className={`text-sm py-2 px-4 rounded-lg flex items-center gap-2 transition-colors font-medium ${u.status === "needs_review"
+                          ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                          : "btn-secondary"
+                          }`}
                       >
                         <Eye className="w-4 h-4" />
                         <span>{u.status === "saved" ? "View" : "Review"}</span>

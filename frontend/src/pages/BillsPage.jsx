@@ -3,15 +3,17 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   FileText, Plus, Search, Calendar, Trash2, Eye,
   X, Wallet, CheckCircle2, Clock, AlertCircle, QrCode, Banknote,
-  FileDown, Send, Pencil, PenSquare, SlidersHorizontal, ChevronDown, ChevronUp
+  FileDown, Send, Pencil, PenSquare, SlidersHorizontal, ChevronDown, ChevronUp, Printer
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../lib/api";
 import { formatCurrency, formatDate } from "../lib/utils";
+import { printerService } from "../printer/printerService";
 
 export default function BillsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [isThermalPrinting, setIsThermalPrinting] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [selectedSource, setSelectedSource] = useState("");
   const [selectedStatus, setSelectedStatus] = useState(""); // "" | "due" | "paid" | "partial" | "unpaid"
@@ -172,6 +174,54 @@ export default function BillsPage() {
       toast.dismiss(`wa-toast-${bill.id}`);
     } finally {
       setSendingBillId(null);
+    }
+  };
+
+  const handleThermalPrint = async (bill) => {
+    setIsThermalPrinting(true);
+    try {
+      toast.loading(`Printing #${bill.bill_no} on VYPRTP3001...`, { id: `thermal-toast-${bill.id}` });
+      const billData = {
+        printer: "VYPRTP3001",
+        paperWidth: 80,
+        bill: {
+          shopName: "KADRI FISH CENTER",
+          invoiceNumber: bill.bill_no || `INV-${bill.id}`,
+          date: bill.bill_date,
+          customer: {
+            name: bill.customer_name || "Customer",
+            phone: bill.customer_phone || "",
+            address: bill.customer_address || "",
+          },
+          items: (bill.items || []).map((it) => ({
+            name: it.product_name || "Item",
+            quantity: Number(it.quantity || 1),
+            rate: Number(it.rate || 0),
+            amount: Number(it.amount || (Number(it.quantity || 1) * Number(it.rate || 0))),
+          })),
+          subtotal: Number(bill.total_amount || 0),
+          discount: 0,
+          gst: 0,
+          total: Number(bill.total_amount || 0),
+          previousBalance: Number(bill.previous_balance || 0),
+          totalDueWithCarryForward: Number(bill.total_due_with_carry_forward || (Number(bill.balance_due || 0) + Number(bill.previous_balance || 0))),
+          amountPaid: Number(bill.amount_paid || 0),
+          balanceDue: Number(bill.balance_due || 0),
+          paymentStatus: bill.payment_status || "unpaid",
+          paymentMethod: bill.payment_method || "Cash",
+          previous_bills: bill.previous_bills || [],
+          payment_history: bill.payment_history || [],
+          footerMessage: "Thank You!\nVisit Again :)",
+        },
+      };
+
+      await printerService.printBill(billData, 48);
+      toast.success(`Receipt for #${bill.bill_no} printed successfully!`, { id: `thermal-toast-${bill.id}` });
+    } catch (err) {
+      console.error("Thermal print failed:", err);
+      toast.error(err.message || "Failed to print to VYPRTP3001", { id: `thermal-toast-${bill.id}`, duration: 5000 });
+    } finally {
+      setIsThermalPrinting(false);
     }
   };
 
@@ -404,9 +454,8 @@ export default function BillsPage() {
             </div>
             <button
               onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-              className={`btn-secondary text-xs sm:text-sm px-3 flex items-center gap-1.5 ${
-                hasAdvancedFilters ? "border-emerald-500/40 text-emerald-400" : ""
-              }`}
+              className={`btn-secondary text-xs sm:text-sm px-3 flex items-center gap-1.5 ${hasAdvancedFilters ? "border-emerald-500/40 text-emerald-400" : ""
+                }`}
               title="More filter options"
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -559,8 +608,8 @@ export default function BillsPage() {
                               isPaid
                                 ? "badge-green"
                                 : isPartial
-                                ? "badge-yellow"
-                                : "badge-red"
+                                  ? "badge-yellow"
+                                  : "badge-red"
                             }
                           >
                             {isPaid ? "Paid" : isPartial ? "Partial" : "Unpaid"}
@@ -591,6 +640,14 @@ export default function BillsPage() {
                               title="Download PDF"
                             >
                               <FileDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleThermalPrint(b)}
+                              disabled={isThermalPrinting}
+                              className="btn-ghost btn-sm !px-1.5 text-zinc-300 hover:text-emerald-400"
+                              title="Print to VYPRTP3001 (Thermal 80mm)"
+                            >
+                              <Printer className="w-3.5 h-3.5 text-emerald-400" />
                             </button>
                             <button
                               onClick={() => setViewingBill(b)}
@@ -648,13 +705,12 @@ export default function BillsPage() {
                       <span className="text-xs text-zinc-400">· {formatDate(b.bill_date)}</span>
                     </div>
                     <span
-                      className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${
-                        isPaid
+                      className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${isPaid
                           ? "badge-green"
                           : isPartial
-                          ? "badge-yellow"
-                          : "badge-red"
-                      }`}
+                            ? "badge-yellow"
+                            : "badge-red"
+                        }`}
                     >
                       {isPaid ? "Paid" : isPartial ? "Partial" : "Unpaid"}
                     </span>
@@ -708,9 +764,8 @@ export default function BillsPage() {
                         Balance
                       </span>
                       <span
-                        className={`font-mono text-sm font-bold block ${
-                          b.balance_due > 0 ? "text-amber-400" : "text-zinc-500"
-                        }`}
+                        className={`font-mono text-sm font-bold block ${b.balance_due > 0 ? "text-amber-400" : "text-zinc-500"
+                          }`}
                       >
                         {b.balance_due > 0 ? formatCurrency(b.balance_due) : "₹0"}
                       </span>
@@ -744,6 +799,15 @@ export default function BillsPage() {
                         aria-label="Download PDF"
                       >
                         <FileDown className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleThermalPrint(b)}
+                        disabled={isThermalPrinting}
+                        className="p-2.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 active:scale-95 transition-all"
+                        title="Thermal Print 80mm"
+                        aria-label="Thermal Print 80mm"
+                      >
+                        <Printer className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => setViewingBill(b)}
@@ -931,11 +995,10 @@ export default function BillsPage() {
                       key={m}
                       type="button"
                       onClick={() => setPaymentForm({ ...paymentForm, payment_method: m })}
-                      className={`p-2 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                        paymentForm.payment_method === m
+                      className={`p-2 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${paymentForm.payment_method === m
                           ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
                           : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200"
-                      }`}
+                        }`}
                     >
                       {m === "Cash" ? <Banknote className="w-4 h-4" /> : <QrCode className="w-4 h-4" />}
                       {m}
@@ -987,6 +1050,15 @@ export default function BillsPage() {
                 <p className="text-xs text-zinc-400 mt-0.5">{viewingBill.customer_name} · {formatDate(viewingBill.bill_date)}</p>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleThermalPrint(viewingBill)}
+                  disabled={isThermalPrinting}
+                  className="btn-primary btn-sm text-xs flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500"
+                  title="Print to VYPRTP3001 (80mm Thermal Receipt)"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>{isThermalPrinting ? "Printing..." : "Thermal Print"}</span>
+                </button>
                 <button
                   onClick={() => downloadBillPdf(viewingBill)}
                   className="btn-secondary btn-sm text-xs flex items-center gap-1"
@@ -1349,12 +1421,12 @@ export default function BillsPage() {
                                     setEditProductRows((prev) => prev.map((item, i) =>
                                       i === idx
                                         ? {
-                                            ...item,
-                                            product_id: selected ? selected.id : "",
-                                            name: selected ? selected.name : item.name,
-                                            unit: selected ? selected.unit : item.unit,
-                                            rate: String(item.rate || 0),
-                                          }
+                                          ...item,
+                                          product_id: selected ? selected.id : "",
+                                          name: selected ? selected.name : item.name,
+                                          unit: selected ? selected.unit : item.unit,
+                                          rate: String(item.rate || 0),
+                                        }
                                         : item
                                     ));
                                   }}

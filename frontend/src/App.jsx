@@ -15,6 +15,7 @@ const BillsPage     = lazy(() => import("./pages/BillsPage"));
 const UploadPage    = lazy(() => import("./pages/UploadPage"));
 const ReportsPage   = lazy(() => import("./pages/ReportsPage"));
 const SettingsPage  = lazy(() => import("./pages/SettingsPage"));
+const PrinterPage   = lazy(() => import("./pages/PrinterPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -44,6 +45,7 @@ export default function App() {
                 <Route path="products"  element={<ProductsPage />} />
                 <Route path="rates"     element={<RatesPage />} />
                 <Route path="bills"     element={<BillsPage />} />
+                <Route path="printer"   element={<PrinterPage />} />
                 <Route path="upload"    element={<UploadPage />} />
                 <Route path="reports"   element={<ReportsPage />} />
                 <Route path="settings"  element={<SettingsPage />} />
