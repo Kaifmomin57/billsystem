@@ -9,6 +9,9 @@ from app.models.models import ColumnMapping, CustomerRate, Product, ProductRate
 
 
 def _load_column_mappings(db: Session) -> Dict[str, Product]:
+    all_products = db.query(Product).filter(Product.is_active.is_(True)).all()
+    product_by_id: Dict[int, Product] = {p.id: p for p in all_products}
+
     active_mappings: List[ColumnMapping] = (
         db.query(ColumnMapping)
         .filter(ColumnMapping.active.is_(True))
@@ -16,12 +19,15 @@ def _load_column_mappings(db: Session) -> Dict[str, Product]:
     )
     result: Dict[str, Product] = {}
     for mapping in active_mappings:
-        product = db.query(Product).filter(Product.id == mapping.product_id).first()
+        product = product_by_id.get(mapping.product_id)
+        if not product and mapping.product_id:
+            product = db.query(Product).filter(Product.id == mapping.product_id).first()
+            if product:
+                product_by_id[product.id] = product
         if product and mapping.column_code:
             result[mapping.column_code.strip().upper()] = product
 
     # Fallback: if not explicitly configured in ColumnMapping, match by Product.product_code or Product.name
-    all_products = db.query(Product).filter(Product.is_active.is_(True)).all()
     for p in all_products:
         if p.product_code:
             code_clean = p.product_code.strip().upper()
@@ -40,6 +46,8 @@ def _resolve_rate(
     customer_id: Optional[int],
     db: Session,
     is_live: bool = False,
+    customer_rates_map: Optional[Dict[tuple[int, int], CustomerRate]] = None,
+    product_rates_map: Optional[Dict[int, ProductRate]] = None,
 ) -> tuple[Optional[Decimal], str]:
     """
     Returns (rate_or_None, rate_source_string).
@@ -48,39 +56,42 @@ def _resolve_rate(
     If is_live is False, priority:
         CustomerRate > ProductRate > None
     """
+    def _get_cr(c_id: int, p_id: int) -> Optional[CustomerRate]:
+        if customer_rates_map is not None:
+            return customer_rates_map.get((c_id, p_id))
+        return (
+            db.query(CustomerRate)
+            .filter(
+                CustomerRate.customer_id == c_id,
+                CustomerRate.product_id == p_id,
+            )
+            .first()
+        )
+
+    def _get_pr(p_id: int) -> Optional[ProductRate]:
+        if product_rates_map is not None:
+            return product_rates_map.get(p_id)
+        return (
+            db.query(ProductRate)
+            .filter(ProductRate.product_id == p_id)
+            .first()
+        )
+
     if is_live:
         # 1. Customer live rate override
         if customer_id is not None:
-            cr: Optional[CustomerRate] = (
-                db.query(CustomerRate)
-                .filter(
-                    CustomerRate.customer_id == customer_id,
-                    CustomerRate.product_id == product.id,
-                )
-                .first()
-            )
+            cr = _get_cr(customer_id, product.id)
             if cr is not None and cr.live_rate is not None:
                 return Decimal(str(cr.live_rate)), "customer_live"
 
         # 2. Base live rate
-        pr: Optional[ProductRate] = (
-            db.query(ProductRate)
-            .filter(ProductRate.product_id == product.id)
-            .first()
-        )
+        pr = _get_pr(product.id)
         if pr is not None and pr.live_rate is not None:
             return Decimal(str(pr.live_rate)), "base_live"
 
         # 3. Fallback: regular customer rate
         if customer_id is not None:
-            cr = (
-                db.query(CustomerRate)
-                .filter(
-                    CustomerRate.customer_id == customer_id,
-                    CustomerRate.product_id == product.id,
-                )
-                .first()
-            )
+            cr = _get_cr(customer_id, product.id)
             if cr is not None and cr.rate is not None:
                 return Decimal(str(cr.rate)), "customer"
 
@@ -92,22 +103,11 @@ def _resolve_rate(
 
     # Standard (non-live) rate resolution
     if customer_id is not None:
-        cr: Optional[CustomerRate] = (
-            db.query(CustomerRate)
-            .filter(
-                CustomerRate.customer_id == customer_id,
-                CustomerRate.product_id == product.id,
-            )
-            .first()
-        )
+        cr = _get_cr(customer_id, product.id)
         if cr is not None and cr.rate is not None:
             return Decimal(str(cr.rate)), "customer"
 
-    pr: Optional[ProductRate] = (
-        db.query(ProductRate)
-        .filter(ProductRate.product_id == product.id)
-        .first()
-    )
+    pr = _get_pr(product.id)
     if pr is not None and pr.rate is not None:
         return Decimal(str(pr.rate)), "base"
 
@@ -137,6 +137,27 @@ def resolve_ledger_rates(
     """
     col_product_map: Dict[str, Product] = _load_column_mappings(db)
     rows: List[Dict[str, Any]] = draft.get("rows", [])
+
+    # Preload all ProductRates and CustomerRates to avoid N+1 queries per cell
+    product_rates = db.query(ProductRate).all()
+    product_rates_map: Dict[int, ProductRate] = {pr.product_id: pr for pr in product_rates}
+
+    customer_ids = {
+        row.get("customer_id")
+        for row in rows
+        if row.get("customer_id") is not None
+    }
+    if customer_ids:
+        customer_rates = (
+            db.query(CustomerRate)
+            .filter(CustomerRate.customer_id.in_(customer_ids))
+            .all()
+        )
+    else:
+        customer_rates = []
+    customer_rates_map: Dict[tuple[int, int], CustomerRate] = {
+        (cr.customer_id, cr.product_id): cr for cr in customer_rates
+    }
 
     for row in rows:
         customer_id: Optional[int] = row.get("customer_id")
@@ -192,7 +213,14 @@ def resolve_ledger_rates(
                 )
                 continue
 
-            db_rate, rate_source = _resolve_rate(product, customer_id, db, is_live=is_live)
+            db_rate, rate_source = _resolve_rate(
+                product,
+                customer_id,
+                db,
+                is_live=is_live,
+                customer_rates_map=customer_rates_map,
+                product_rates_map=product_rates_map,
+            )
 
             cell_data["resolved_product_id"] = product.id
             cell_data["resolved_product_code"] = product.product_code

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 from app.core.database import get_db
@@ -16,10 +16,10 @@ def get_dashboard_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    total_customers = db.query(Customer).filter(Customer.is_active == True).count()
-    total_products  = db.query(Product).filter(Product.is_active == True).count()
+    total_customers = db.query(func.count(Customer.id)).filter(Customer.is_active == True).scalar() or 0
+    total_products  = db.query(func.count(Product.id)).filter(Product.is_active == True).scalar() or 0
     
-    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # Combined single query for financial & status metrics (eliminates 12 individual queries)
     stats_row = (
@@ -117,8 +117,6 @@ def get_dashboard_stats(
         "total_sales": total_sales,
         "received_payment": received_pay,
         "balance_payment": balance_pay,
-        "total_revenue": total_sales,
-        "revenue_today": today_sales,
         "today_bills": today_bills,
         "today_sales": today_sales,
         "today_received": today_received,

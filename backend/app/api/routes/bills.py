@@ -86,7 +86,7 @@ def _format_single_bill(bill, all_customer_unpaid=None):
             "amount_paid": float(pb.amount_paid or 0),
             "balance_due": float(pb.balance_due or 0),
         }
-        for pb in prev_bills_list
+        for pb in prev_bills_list[:5]
     ]
     return BillOut(
         id=bill.id, customer_id=bill.customer_id,
@@ -136,7 +136,7 @@ def _format_bills_batch(bills, db: Session):
 def list_bills(
     customer_id: Optional[int] = None, start_date: Optional[str] = None,
     end_date: Optional[str] = None, source: Optional[str] = None,
-    limit: int = 100, db: Session = Depends(get_db),
+    limit: int = 100, offset: int = 0, db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     query = (
@@ -153,7 +153,7 @@ def list_bills(
     if end_date: query = query.filter(Bill.bill_date <= end_date)
     if source and source.strip() and source.lower() != "all":
         query = query.filter(Bill.source == source.strip())
-    bills = query.order_by(Bill.bill_date.desc(), Bill.id.desc()).limit(limit).all()
+    bills = query.order_by(Bill.bill_date.desc(), Bill.id.desc()).offset(offset).limit(limit).all()
     return _format_bills_batch(bills, db)
 
 @router.post("", response_model=BillOut)
@@ -205,9 +205,22 @@ def bulk_send_whatsapp(payload: BulkWhatsAppRequest, db: Session = Depends(get_d
     sent_count = 0
     failed_count = 0
     skipped_count = 0
-    
+
+    # Batch query bills to avoid N+1 queries
+    bills_list = (
+        db.query(Bill)
+        .options(
+            joinedload(Bill.customer),
+            selectinload(Bill.items).joinedload(BillItem.product),
+            selectinload(Bill.payment_installments),
+        )
+        .filter(Bill.id.in_(payload.bill_ids))
+        .all()
+    )
+    bills_map = {b.id: b for b in bills_list}
+
     for bill_id in payload.bill_ids:
-        bill = db.query(Bill).filter(Bill.id == bill_id).first()
+        bill = bills_map.get(bill_id)
         if not bill:
             results.append({"bill_id": bill_id, "status": "failed", "error": "Bill not found"})
             failed_count += 1
@@ -380,86 +393,11 @@ def delete_bill(bill_id: int, db: Session = Depends(get_db), current_user: User 
     db.commit()
     return {"message": "Bill deleted successfully"}
 
-@router.get("/{bill_id}/pdf")
-def get_bill_pdf(bill_id: int, db: Session = Depends(get_db)):
-    """Generates and downloads the PDF invoice for a bill."""
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill:
-        raise HTTPException(status_code=404, detail="Bill not found")
-    
-    formatted = _format_bill_out(bill, db)
-    
-    # Prepare bill data dictionary for PDF generator
-    prev_bills_db = _get_previous_unpaid_bills(bill, db)
-    bill_dict = {
-        "bill_no": formatted.bill_no,
-        "bill_date": formatted.bill_date,
-        "customer_name": formatted.customer_name or "Valued Customer",
-        "customer_phone": formatted.customer_phone or "",
-        "customer_address": formatted.customer_address or "",
-        "payment_status": formatted.payment_status,
-        "payment_method": formatted.payment_method,
-        "total_amount": formatted.total_amount,
-        "amount_paid": formatted.amount_paid,
-        "balance_due": formatted.balance_due,
-        "previous_balance": formatted.previous_balance,
-        "total_due_with_carry_forward": formatted.total_due_with_carry_forward,
-        "previous_bills": [
-            {
-                "bill_no": pb.bill_no,
-                "bill_date": pb.bill_date,
-                "total_amount": float(pb.total_amount or 0),
-                "amount_paid": float(pb.amount_paid or 0),
-                "balance_due": float(pb.balance_due or 0),
-            }
-            for pb in prev_bills_db
-        ],
-        "items": [
-            {
-                "name": item.product_name or "Custom Item",
-                "unit": item.unit or "kg",
-                "quantity": item.quantity,
-                "rate": item.rate,
-                "amount": item.amount
-            }
-            for item in formatted.items
-        ],
-        "payment_history": [
-            {
-                "amount": inst.amount,
-                "payment_method": inst.payment_method,
-                "paid_at": inst.paid_at.isoformat() if inst.paid_at else "",
-                "note": inst.note
-            }
-            for inst in formatted.payment_history
-        ]
-    }
-    
-    pdf_bytes = generate_bill_pdf(bill_dict)
-    filename = f"Invoice_{formatted.bill_no or bill_id}.pdf"
-    
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
+def _format_whatsapp_message(formatted) -> str:
+    status_emoji = (
+        "✅ Paid Complete" if formatted.payment_status == "paid"
+        else ("🟡 Partial Paid" if formatted.payment_status == "partial" else "🔴 Unpaid")
     )
-
-@router.get("/{bill_id}/whatsapp-link")
-def get_whatsapp_share_link(bill_id: int, db: Session = Depends(get_db)):
-    """Returns formatted WhatsApp message & click-to-chat URL."""
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill:
-        raise HTTPException(status_code=404, detail="Bill not found")
-    
-    formatted = _format_bill_out(bill, db)
-    cust_phone = (formatted.customer_phone or "").strip()
-    clean_phone = clean_phone_number(cust_phone)
-    
-    # Formulate message
-    status_emoji = "✅ Paid Complete" if formatted.payment_status == "paid" else ("🟡 Partial Paid" if formatted.payment_status == "partial" else "🔴 Unpaid")
-    
     lines = [
         f"🧾 *INVOICE: #{formatted.bill_no}*",
         f"👤 *Customer:* {formatted.customer_name or 'Customer'}",
@@ -485,8 +423,88 @@ def get_whatsapp_share_link(bill_id: int, db: Session = Depends(get_db)):
         "",
         "🙏 _Thank you for your business!_",
     ])
+    return "\n".join(lines)
+
+
+def _build_bill_pdf_dict(formatted) -> Dict[str, Any]:
+    return {
+        "bill_no": formatted.bill_no,
+        "bill_date": formatted.bill_date,
+        "customer_name": formatted.customer_name or "Valued Customer",
+        "customer_phone": formatted.customer_phone or "",
+        "customer_address": formatted.customer_address or "",
+        "payment_status": formatted.payment_status,
+        "payment_method": formatted.payment_method,
+        "total_amount": formatted.total_amount,
+        "amount_paid": formatted.amount_paid,
+        "balance_due": formatted.balance_due,
+        "previous_balance": formatted.previous_balance,
+        "total_due_with_carry_forward": formatted.total_due_with_carry_forward,
+        "previous_bills": [
+            {
+                "bill_no": pb.get("bill_no", "") if isinstance(pb, dict) else getattr(pb, "bill_no", ""),
+                "bill_date": pb.get("bill_date", "") if isinstance(pb, dict) else getattr(pb, "bill_date", ""),
+                "total_amount": float((pb.get("total_amount") if isinstance(pb, dict) else getattr(pb, "total_amount", 0)) or 0),
+                "amount_paid": float((pb.get("amount_paid") if isinstance(pb, dict) else getattr(pb, "amount_paid", 0)) or 0),
+                "balance_due": float((pb.get("balance_due") if isinstance(pb, dict) else getattr(pb, "balance_due", 0)) or 0),
+            }
+            for pb in (formatted.previous_bills or [])
+        ],
+        "items": [
+            {
+                "name": item.product_name or "Custom Item",
+                "unit": item.unit or "kg",
+                "quantity": item.quantity,
+                "rate": item.rate,
+                "amount": item.amount
+            }
+            for item in formatted.items
+        ],
+        "payment_history": [
+            {
+                "amount": inst.amount,
+                "payment_method": inst.payment_method,
+                "paid_at": inst.paid_at.isoformat() if inst.paid_at else "",
+                "note": inst.note
+            }
+            for inst in formatted.payment_history
+        ]
+    }
+
+
+@router.get("/{bill_id}/pdf")
+def get_bill_pdf(bill_id: int, db: Session = Depends(get_db)):
+    """Generates and downloads the PDF invoice for a bill."""
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
     
-    message_text = "\n".join(lines)
+    formatted = _format_bill_out(bill, db)
+    bill_dict = _build_bill_pdf_dict(formatted)
+    
+    pdf_bytes = generate_bill_pdf(bill_dict)
+    filename = f"Invoice_{formatted.bill_no or bill_id}.pdf"
+    
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
+
+@router.get("/{bill_id}/whatsapp-link")
+def get_whatsapp_share_link(bill_id: int, db: Session = Depends(get_db)):
+    """Returns formatted WhatsApp message & click-to-chat URL."""
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    formatted = _format_bill_out(bill, db)
+    cust_phone = (formatted.customer_phone or "").strip()
+    clean_phone = clean_phone_number(cust_phone)
+    
+    message_text = _format_whatsapp_message(formatted)
     encoded_text = urllib.parse.quote(message_text)
     
     wa_url = f"https://wa.me/{clean_phone}?text={encoded_text}" if clean_phone else f"https://wa.me/?text={encoded_text}"
@@ -523,79 +541,8 @@ def _build_bill_whatsapp_payload(bill, db):
     cust_phone = (formatted.customer_phone or "").strip()
     cleaned_phone = clean_phone_number(cust_phone)
     
-    prev_bills_db_wa = _get_previous_unpaid_bills(bill, db)
-    bill_dict = {
-        "bill_no": formatted.bill_no,
-        "bill_date": formatted.bill_date,
-        "customer_name": formatted.customer_name or "Valued Customer",
-        "customer_phone": formatted.customer_phone or "",
-        "customer_address": formatted.customer_address or "",
-        "payment_status": formatted.payment_status,
-        "payment_method": formatted.payment_method,
-        "total_amount": formatted.total_amount,
-        "amount_paid": formatted.amount_paid,
-        "balance_due": formatted.balance_due,
-        "previous_balance": formatted.previous_balance,
-        "total_due_with_carry_forward": formatted.total_due_with_carry_forward,
-        "previous_bills": [
-            {
-                "bill_no": pb.bill_no,
-                "bill_date": pb.bill_date,
-                "total_amount": float(pb.total_amount or 0),
-                "amount_paid": float(pb.amount_paid or 0),
-                "balance_due": float(pb.balance_due or 0),
-            }
-            for pb in prev_bills_db_wa
-        ],
-        "items": [
-            {
-                "name": item.product_name or "Custom Item",
-                "unit": item.unit or "kg",
-                "quantity": item.quantity,
-                "rate": item.rate,
-                "amount": item.amount
-            }
-            for item in formatted.items
-        ],
-        "payment_history": [
-            {
-                "amount": inst.amount,
-                "payment_method": inst.payment_method,
-                "paid_at": inst.paid_at.isoformat() if inst.paid_at else "",
-                "note": inst.note
-            }
-            for inst in formatted.payment_history
-        ]
-    }
-    
-    # Formulate message
-    status_emoji = "✅ Paid Complete" if formatted.payment_status == "paid" else ("🟡 Partial Paid" if formatted.payment_status == "partial" else "🔴 Unpaid")
-    lines = [
-        f"🧾 *INVOICE: #{formatted.bill_no}*",
-        f"👤 *Customer:* {formatted.customer_name or 'Customer'}",
-        f"📅 *Date:* {formatted.bill_date}",
-        "────────────────────",
-    ]
-    for itm in formatted.items:
-        lines.append(f"• {itm.product_name or 'Item'}: {itm.quantity:g} × ₹{itm.rate:.2f} = *₹{itm.amount:.2f}*")
-    
-    lines.extend([
-        "────────────────────",
-        f"💰 *Current Bill Total:* ₹{formatted.total_amount:.2f}",
-        f"💳 *Amount Paid ({formatted.payment_method}):* ₹{formatted.amount_paid:.2f}",
-        f"⏳ *Current Balance Due:* ₹{formatted.balance_due:.2f}",
-    ])
-    if formatted.previous_balance > 0.009:
-        lines.extend([
-            f"🔴 *Previous Pending (C/F):* ₹{formatted.previous_balance:.2f}",
-            f"🔥 *TOTAL OUTSTANDING:* ₹{formatted.total_due_with_carry_forward:.2f}",
-        ])
-    lines.extend([
-        f"📌 *Payment Status:* {status_emoji}",
-        "",
-        "🙏 _Thank you for your business!_",
-    ])
-    message_text = "\n".join(lines)
+    bill_dict = _build_bill_pdf_dict(formatted)
+    message_text = _format_whatsapp_message(formatted)
     
     pdf_bytes = generate_bill_pdf(bill_dict)
     pdf_filename = f"Invoice_{formatted.bill_no or bill.id}.pdf"

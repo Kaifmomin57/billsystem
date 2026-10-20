@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Upload as UploadIcon, FileSpreadsheet, CheckCircle2, AlertTriangle,
@@ -774,32 +775,42 @@ export default function UploadPage() {
   const [draftHistory, setDraftHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
 
-  const navigate = (path) => { window.location.href = path; };
+  const navigate = useNavigate();
 
-  // Fetch recent uploads list
+  // Fetch recent uploads list (polls only when an upload is in processing state)
   const { data: uploads = [], refetch: refetchUploads } = useQuery({
     queryKey: ["uploads"],
     queryFn: async () => (await api.get("/uploads?limit=25")).data,
-    refetchInterval: 8000,
+    refetchInterval: (query) => {
+      const data = query?.state?.data;
+      return Array.isArray(data) && data.some((u) => u.status === "processing") ? 8000 : false;
+    },
+    refetchIntervalInBackground: false,
   });
 
   // Fetch tag dictionary for hover explanations
   const { data: tags = [] } = useQuery({
     queryKey: ["settings", "tags"],
     queryFn: async () => (await api.get("/settings/tags")).data,
+    staleTime: 5 * 60_000,
   });
-  const tagMeaningMap = tags.reduce((acc, t) => { acc[t.tag] = t.meaning; return acc; }, {});
+  const tagMeaningMap = useMemo(
+    () => tags.reduce((acc, t) => { acc[t.tag] = t.meaning; return acc; }, {}),
+    [tags]
+  );
 
   // Fetch customers for autocomplete & fuzzy matching
   const { data: customers = [] } = useQuery({
     queryKey: ["customers"],
     queryFn: async () => (await api.get("/customers")).data,
+    staleTime: 5 * 60_000,
   });
 
   // Fetch products for column mapping
   const { data: products = [] } = useQuery({
     queryKey: ["products"],
     queryFn: async () => (await api.get("/products")).data,
+    staleTime: 5 * 60_000,
   });
 
   // Fetch column mappings
@@ -865,7 +876,7 @@ export default function UploadPage() {
     setIsDraftDirty(true);
     setDraftHistory((prev) => {
       const sliced = prev.slice(0, historyIndex + 1);
-      const nextHistory = [...sliced, JSON.parse(JSON.stringify(newDraft))];
+      const nextHistory = [...sliced, structuredClone(newDraft)];
       if (nextHistory.length > 25) nextHistory.shift();
       return nextHistory;
     });
@@ -878,7 +889,7 @@ export default function UploadPage() {
     if (historyIndex > 0) {
       const prevDraft = draftHistory[historyIndex - 1];
       setHistoryIndex(historyIndex - 1);
-      setActiveDraft(JSON.parse(JSON.stringify(prevDraft)));
+      setActiveDraft(structuredClone(prevDraft));
       setIsDraftDirty(true);
       toast.success("Undo", { id: "undo-toast", duration: 800 });
     }
@@ -888,7 +899,7 @@ export default function UploadPage() {
     if (historyIndex < draftHistory.length - 1) {
       const nextDraft = draftHistory[historyIndex + 1];
       setHistoryIndex(historyIndex + 1);
-      setActiveDraft(JSON.parse(JSON.stringify(nextDraft)));
+      setActiveDraft(structuredClone(nextDraft));
       setIsDraftDirty(true);
       toast.success("Redo", { id: "undo-toast", duration: 800 });
     }

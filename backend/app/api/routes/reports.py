@@ -1,9 +1,9 @@
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload, selectinload
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -18,24 +18,36 @@ def get_reports_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    total_customers = db.query(Customer).filter(Customer.is_active == True).count()
-    total_products = db.query(Product).filter(Product.is_active == True).count()
-    total_bills = db.query(Bill).join(Customer, Customer.id == Bill.customer_id).count()
-    total_revenue = db.query(func.sum(Bill.total_amount)).join(Customer, Customer.id == Bill.customer_id).scalar() or 0.0
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    today_str = datetime.utcnow().strftime("%Y-%m-%d")
-    today_bills = db.query(Bill).join(Customer, Customer.id == Bill.customer_id).filter(Bill.bill_date == today_str).count()
-    today_revenue = db.query(func.sum(Bill.total_amount)).join(Customer, Customer.id == Bill.customer_id).filter(Bill.bill_date == today_str).scalar() or 0.0
+    total_customers = db.query(func.count(Customer.id)).filter(Customer.is_active == True).scalar() or 0
+    total_products = db.query(func.count(Product.id)).filter(Product.is_active == True).scalar() or 0
+
+    bill_stats = (
+        db.query(
+            func.count(Bill.id),
+            func.coalesce(func.sum(Bill.total_amount), 0.0),
+            func.coalesce(func.sum(case((Bill.bill_date == today_str, 1), else_=0)), 0),
+            func.coalesce(func.sum(case((Bill.bill_date == today_str, Bill.total_amount), else_=0.0)), 0.0),
+        )
+        .join(Customer, Customer.id == Bill.customer_id)
+        .first()
+    )
+
+    total_bills = int(bill_stats[0] or 0)
+    total_revenue = float(bill_stats[1] or 0.0)
+    today_bills = int(bill_stats[2] or 0)
+    today_revenue = float(bill_stats[3] or 0.0)
 
     return {
         "total_customers": total_customers,
         "total_products": total_products,
         "total_bills": total_bills,
-        "total_revenue": float(total_revenue),
+        "total_revenue": total_revenue,
         "bills_today": today_bills,
         "today_bills": today_bills,
-        "revenue_today": float(today_revenue),
-        "today_revenue": float(today_revenue)
+        "revenue_today": today_revenue,
+        "today_revenue": today_revenue
     }
 
 
@@ -45,6 +57,18 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
     Accurately computes Customer summaries, Product summaries,
     Detailed itemized bills, and Grand Totals (Total Sale, Received, Pending).
     """
+    try:
+        start_dt = datetime.strptime(start, "%Y-%m-%d")
+        end_dt = datetime.strptime(end, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
+
+    if start_dt > end_dt:
+        raise HTTPException(status_code=400, detail="Start date cannot be after end date.")
+
+    if (end_dt - start_dt).days > 365:
+        raise HTTPException(status_code=400, detail="Date range cannot exceed 365 days.")
+
     bills = (
         db.query(Bill)
         .join(Customer, Customer.id == Bill.customer_id)
@@ -211,7 +235,7 @@ def get_reports_summary(
     Total Sales, Received, Pending, Customer breakdown, and Product breakdown.
     Powers the executive dashboard on the Reports page.
     """
-    start = date_from or date or datetime.utcnow().strftime("%Y-%m-%d")
+    start = date_from or date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     end   = date_to   or date or start
 
     data = _get_report_data_for_period(start, end, db)
@@ -237,7 +261,7 @@ def get_daily_by_customer(
     - Sheet 1: Customer Summary (Each customer: Total Sale, Received, Pending, Status)
     - Sheet 2: Detailed Bills & Items breakdown with customer subtotals
     """
-    start = date_from or date or datetime.utcnow().strftime("%Y-%m-%d")
+    start = date_from or date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     end   = date_to   or date or start
 
     data = _get_report_data_for_period(start, end, db)
@@ -265,7 +289,7 @@ def get_daily_by_product(
     - Allocated received and pending per product
     - KPI cards and Grand Totals
     """
-    start = date_from or date or datetime.utcnow().strftime("%Y-%m-%d")
+    start = date_from or date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     end   = date_to   or date or start
 
     data = _get_report_data_for_period(start, end, db)

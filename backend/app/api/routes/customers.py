@@ -25,7 +25,8 @@ class CustomerIn(BaseModel):
 def list_customers(
     search: str = Query(""),
     is_active: Optional[bool] = None,
-    limit: int = Query(500),
+    limit: int = Query(200, le=1000),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -34,7 +35,7 @@ def list_customers(
         q = q.filter(Customer.name.ilike(f"%{search}%"))
     if is_active is not None:
         q = q.filter(Customer.is_active == is_active)
-    items = q.order_by(Customer.name).limit(limit).all()
+    items = q.order_by(Customer.name).offset(offset).limit(limit).all()
     return [
         {"id": c.id, "name": c.name, "phone": c.phone, "address": c.address, "notes": c.notes, "is_active": c.is_active}
         for c in items

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   FileText, Plus, Search, Calendar, Trash2, Eye,
@@ -68,7 +68,7 @@ export default function BillsPage() {
     staleTime: 5 * 60_000,  // products rarely change — 5min cache
   });
 
-  // Fetch Bills with filters
+  // Fetch Bills with filters (cached for 60s)
   const { data: bills = [], isLoading } = useQuery({
     queryKey: ["bills", selectedCustomerId, selectedSource, startDate, endDate],
     queryFn: async () => {
@@ -79,14 +79,15 @@ export default function BillsPage() {
       if (endDate) url += `end_date=${endDate}&`;
       return (await api.get(url)).data;
     },
+    staleTime: 60_000,
   });
 
   // Delete Mutation
   const deleteMutation = useMutation({
     mutationFn: (id) => api.delete(`/bills/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries(["bills"]);
-      queryClient.invalidateQueries(["dashboard-stats"]);
+      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       toast.success("Bill deleted successfully");
     },
   });
@@ -95,14 +96,8 @@ export default function BillsPage() {
   const createMutation = useMutation({
     mutationFn: (payload) => api.post("/bills", payload),
     onSuccess: (res) => {
-      if (res?.data) {
-        queryClient.setQueriesData(
-          { queryKey: ["bills"] },
-          (old) => (Array.isArray(old) ? [res.data, ...old.filter((b) => b.id !== res.data.id)] : [res.data])
-        );
-      }
-      queryClient.invalidateQueries(["bills"]);
-      queryClient.invalidateQueries(["dashboard-stats"]);
+      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       toast.success("Bill created! Printing receipt...");
       setIsManualModalOpen(false);
       // Auto-print thermal receipt after bill creation
@@ -118,15 +113,9 @@ export default function BillsPage() {
   // Update Bill Mutation
   const updateBillMutation = useMutation({
     mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}`, payload),
-    onSuccess: (res) => {
-      if (res?.data) {
-        queryClient.setQueriesData(
-          { queryKey: ["bills"] },
-          (old) => (Array.isArray(old) ? old.map((b) => (b.id === res.data.id ? res.data : b)) : [res.data])
-        );
-      }
-      queryClient.invalidateQueries(["bills"]);
-      queryClient.invalidateQueries(["dashboard-stats"]);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       toast.success("Bill updated successfully!");
       setIsEditBillModalOpen(false);
       setEditingBill(null);
@@ -139,15 +128,9 @@ export default function BillsPage() {
   // Payment Record Mutation
   const paymentMutation = useMutation({
     mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}/payment`, payload),
-    onSuccess: (res) => {
-      if (res?.data) {
-        queryClient.setQueriesData(
-          { queryKey: ["bills"] },
-          (old) => (Array.isArray(old) ? old.map((b) => (b.id === res.data.id ? res.data : b)) : [res.data])
-        );
-      }
-      queryClient.invalidateQueries(["bills"]);
-      queryClient.invalidateQueries(["dashboard-stats"]);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       toast.success("Payment recorded successfully!");
       setPaymentBill(null);
     },
@@ -157,21 +140,25 @@ export default function BillsPage() {
   });
 
   const downloadBillPdf = async (bill) => {
+    let url = null;
     try {
       toast.loading(`Generating PDF for #${bill.bill_no}...`, { id: `pdf-toast-${bill.id}` });
       const res = await api.get(`/bills/${bill.id}/pdf`, { responseType: "blob" });
       const blob = new Blob([res.data], { type: "application/pdf" });
-      const url = window.URL.createObjectURL(blob);
+      url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
       link.setAttribute("download", `Invoice_${bill.bill_no || bill.id}_Rs${Math.round(bill.total_amount || 0)}.pdf`);
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(url);
       toast.success(`Invoice #${bill.bill_no} downloaded!`, { id: `pdf-toast-${bill.id}` });
     } catch {
       toast.error("Failed to download PDF invoice", { id: `pdf-toast-${bill.id}` });
+    } finally {
+      if (url) {
+        window.URL.revokeObjectURL(url);
+      }
     }
   };
 
@@ -352,9 +339,18 @@ export default function BillsPage() {
     });
   };
 
-  const billTotal = productRows.reduce((s, r) => s + (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0), 0);
-  const billBalance = Math.max(0, billTotal - (parseFloat(billMeta.amount_paid) || 0));
-  const editBillTotal = editProductRows.reduce((s, r) => s + (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0), 0);
+  const billTotal = useMemo(
+    () => productRows.reduce((s, r) => s + (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0), 0),
+    [productRows]
+  );
+  const billBalance = useMemo(
+    () => Math.max(0, billTotal - (parseFloat(billMeta.amount_paid) || 0)),
+    [billTotal, billMeta.amount_paid]
+  );
+  const editBillTotal = useMemo(
+    () => editProductRows.reduce((s, r) => s + (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0), 0),
+    [editProductRows]
+  );
 
   const handlePaymentSubmit = (e) => {
     e.preventDefault();
@@ -379,23 +375,42 @@ export default function BillsPage() {
     });
   };
 
-  // Status counts for pills
-  const paidCount = bills.filter((b) => b.payment_status === "paid").length;
-  const dueCount = bills.filter((b) => b.payment_status === "unpaid" || b.payment_status === "partial").length;
+  // Status counts for pills (memoized)
+  const paidCount = useMemo(() => bills.filter((b) => b.payment_status === "paid").length, [bills]);
+  const dueCount = useMemo(
+    () => bills.filter((b) => b.payment_status === "unpaid" || b.payment_status === "partial").length,
+    [bills]
+  );
 
-  const filteredBills = bills.filter((b) => {
-    if (selectedStatus === "paid" && b.payment_status !== "paid") return false;
-    if (selectedStatus === "due" && b.payment_status === "paid") return false;
-    if (selectedStatus === "partial" && b.payment_status !== "partial") return false;
-    if (selectedStatus === "unpaid" && b.payment_status !== "unpaid") return false;
+  const filteredBills = useMemo(() => {
+    return bills.filter((b) => {
+      if (selectedStatus === "paid" && b.payment_status !== "paid") return false;
+      if (selectedStatus === "due" && b.payment_status === "paid") return false;
+      if (selectedStatus === "partial" && b.payment_status !== "partial") return false;
+      if (selectedStatus === "unpaid" && b.payment_status !== "unpaid") return false;
 
-    const q = search.toLowerCase();
-    return (
-      !q ||
-      b.customer_name?.toLowerCase().includes(q) ||
-      b.bill_no?.toLowerCase().includes(q)
-    );
-  });
+      const q = search.toLowerCase();
+      return (
+        !q ||
+        b.customer_name?.toLowerCase().includes(q) ||
+        b.bill_no?.toLowerCase().includes(q)
+      );
+    });
+  }, [bills, selectedStatus, search]);
+
+  // Client-side pagination (drastically improves initial rendering speed)
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, selectedStatus, selectedCustomerId, selectedSource, startDate, endDate]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredBills.length / PAGE_SIZE));
+  const paginatedBills = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredBills.slice(start, start + PAGE_SIZE);
+  }, [filteredBills, page]);
 
   const openPaymentModal = (bill) => {
     setPaymentBill(bill);
@@ -583,7 +598,7 @@ export default function BillsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBills.map((b) => {
+                  {paginatedBills.map((b) => {
                     const isPaid = b.payment_status === "paid";
                     const isPartial = b.payment_status === "partial";
 
@@ -709,7 +724,7 @@ export default function BillsPage() {
 
           {/* Mobile Card View (< md) - Spacious, Distinct Cards with generous gaps */}
           <div className="block md:hidden flex flex-col gap-4">
-            {filteredBills.map((b) => {
+            {paginatedBills.map((b) => {
               const isPaid = b.payment_status === "paid";
               const isPartial = b.payment_status === "partial";
 
@@ -869,6 +884,36 @@ export default function BillsPage() {
               );
             })}
           </div>
+
+          {/* Pagination Controls */}
+          {filteredBills.length > PAGE_SIZE && (
+            <div className="card p-3 sm:p-4 flex items-center justify-between text-xs text-zinc-400">
+              <div>
+                Showing <span className="font-semibold text-zinc-200">{(page - 1) * PAGE_SIZE + 1}</span> to{" "}
+                <span className="font-semibold text-zinc-200">{Math.min(page * PAGE_SIZE, filteredBills.length)}</span> of{" "}
+                <span className="font-semibold text-zinc-200">{filteredBills.length}</span> bills
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="btn-secondary btn-sm px-3 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <span className="font-mono text-zinc-300 px-2 font-medium">
+                  {page} / {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                  className="btn-secondary btn-sm px-3 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
 

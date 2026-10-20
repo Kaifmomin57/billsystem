@@ -3,7 +3,7 @@ import json
 import hashlib
 import uuid
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
@@ -16,32 +16,12 @@ from app.models.models import Upload, UploadStatus, Bill, BillItem, PaymentInsta
 from app.schemas.schemas import UploadDraftUpdate, UploadOut
 from app.services.gemini_service import analyze_image
 from app.services.excel_service import build_ledger_page_excel
-from app.services.ledger_service import resolve_ledger_rates, _load_column_mappings
+from app.services.ledger_service import resolve_ledger_rates
 from app.services.cloudinary_service import upload_image_to_cloudinary
 from app.utils.image_preprocessor import preprocess_image
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 settings = get_settings()
-
-def _match_or_find_customer(name_raw: str, db: Session) -> Optional[Customer]:
-    if not name_raw:
-        return None
-    name_clean = name_raw.strip()
-    # 1. Exact match
-    c = db.query(Customer).filter(Customer.name.ilike(name_clean)).first()
-    if c: return c
-    
-    # 2. Alias match
-    alias = db.query(CustomerAlias).filter(CustomerAlias.alias.ilike(name_clean)).first()
-    if alias and alias.customer:
-        return alias.customer
-        
-    # 3. Substring match
-    all_custs = db.query(Customer).all()
-    for cust in all_custs:
-        if name_clean.lower() in cust.name.lower() or cust.name.lower() in name_clean.lower():
-            return cust
-    return None
 
 def _enrich_draft(draft: Dict[str, Any], db: Session) -> Dict[str, Any]:
     """Enrich rows with customer IDs, resolved product IDs, and expected rates (batch optimized in-memory)"""
@@ -181,11 +161,11 @@ async def upload_and_process_bill(
         # Format draft data
         if upload_type == "ledger":
             enriched = _enrich_draft(parsed_json, db)
-            upload.page_date = enriched.get("page_date") or datetime.utcnow().strftime("%Y-%m-%d")
+            upload.page_date = enriched.get("page_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
             upload.draft_data = json.dumps(enriched)
         else:
             # Single bill format to standard draft
-            upload.page_date = parsed_json.get("invoice", {}).get("date") or datetime.utcnow().strftime("%Y-%m-%d")
+            upload.page_date = parsed_json.get("invoice", {}).get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
             upload.draft_data = json.dumps(parsed_json)
             
         upload.gemini_raw_response = json.dumps({"parsed": parsed_json, "meta": meta})
@@ -330,6 +310,10 @@ def confirm_upload_and_create_bills(
     created_bills = []
     skipped_rows = []
 
+    # Preload existing customers to avoid N+1 DB queries per row
+    existing_customers = db.query(Customer).all()
+    customer_name_map = {c.name.strip().lower(): c for c in existing_customers if c.name}
+
     rows = draft.get("rows", [])
     for row in rows:
         c_name = (row.get("customer_name") or row.get("customer_name_raw") or "").strip()
@@ -337,12 +321,14 @@ def confirm_upload_and_create_bills(
             skipped_rows.append(c_name or "(unnamed)")
             continue
 
-        # Get or create customer
-        customer = db.query(Customer).filter(Customer.name == c_name).first()
+        # Get or create customer (in-memory lookup first)
+        c_key = c_name.lower()
+        customer = customer_name_map.get(c_key)
         if not customer:
             customer = Customer(name=c_name, is_active=True)
             db.add(customer)
             db.flush()
+            customer_name_map[c_key] = customer
             raw_alias = (row.get("customer_name_raw") or "").strip()
             if raw_alias and raw_alias != c_name:
                 db.add(CustomerAlias(customer_id=customer.id, alias=raw_alias))
@@ -404,7 +390,7 @@ def confirm_upload_and_create_bills(
         bill = Bill(
             customer_id=customer.id,
             bill_no=bill_no,
-            bill_date=upload.page_date or datetime.utcnow().strftime("%Y-%m-%d"),
+            bill_date=upload.page_date or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             total_amount=total_amt,
             amount_paid=0,
             balance_due=total_amt,

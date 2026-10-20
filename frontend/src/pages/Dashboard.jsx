@@ -32,6 +32,7 @@ export default function Dashboard() {
     queryKey: ["dashboard-stats"],
     queryFn: () => api.get("/stats/dashboard").then((r) => r.data),
     refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 
   if (isLoading) {
