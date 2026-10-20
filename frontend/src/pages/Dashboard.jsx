@@ -32,22 +32,14 @@ function StatCard({ label, value, subtext, icon: Icon, badgeColor }) {
 }
 
 export default function Dashboard() {
+  const [billPage, setBillPage] = useState(1);
+
   const { data: stats, isLoading } = useQuery({
     queryKey: ["dashboard-stats"],
     queryFn: () => api.get("/stats/dashboard").then((r) => r.data),
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
   });
-
-  if (isLoading) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="card p-5 h-28 bg-zinc-900/60" />
-        ))}
-      </div>
-    );
-  }
 
   const totalSales = stats?.total_sales ?? 0;
   const receivedPayment = stats?.received_payment ?? 0;
@@ -64,7 +56,6 @@ export default function Dashboard() {
   const topDebtors = stats?.top_debtors || [];
   const recentBills = stats?.recent_bills || [];
 
-  const [billPage, setBillPage] = useState(1);
   const totalBillPages = Math.ceil(recentBills.length / BILLS_PAGE_SIZE) || 1;
   const paginatedBills = useMemo(() => {
     const s = (billPage - 1) * BILLS_PAGE_SIZE;
@@ -72,6 +63,16 @@ export default function Dashboard() {
   }, [recentBills, billPage]);
 
   const paidPercentage = totalBills > 0 ? Math.round((paidCount / totalBills) * 100) : 0;
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="card p-5 h-28 bg-zinc-900/60" />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
