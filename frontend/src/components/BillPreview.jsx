@@ -13,7 +13,7 @@ const FONT_SIZES = [
 export default function BillPreview({ billData, onPrint, isPrinting }) {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState("thermal"); // 'thermal' | 'json'
-  const [fontSizeIndex, setFontSizeIndex] = useState(1); // Default: 18px (Bada & Clear!)
+  const [fontSizeIndex, setFontSizeIndex] = useState(2); // Default: 20px (Extra Bada)
 
   const formattedText = formatBillAsText(billData, 48);
 

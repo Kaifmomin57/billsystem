@@ -322,7 +322,7 @@ export function buildBillEscPos(billData, paperWidth = 42) {
   const invNo = data.invoiceNumber || data.bill_no || "INV-1001";
   const pStatus = (data.paymentStatus || data.payment_status || "UNPAID").toUpperCase();
 
-  b.twoColumnRow(`Invoice No: #${invNo}`, `Date: ${dateStr}`, true);
+  b.twoColumnRow(`Invoice No: #${invNo}`, `Date: ${dateStr}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
   b.twoColumnRow("Status", `[ ${pStatus} ]`, true);
 
   const payMode = data.paymentMethod || data.payment_method || "Cash";
@@ -349,8 +349,8 @@ export function buildBillEscPos(billData, paperWidth = 42) {
       .addText(`${idx + 1}. ${name.toUpperCase()}`)
       .lineFeed();
 
-    // 2. Qty x Rate (Left) and Total Amount (Right)
-    b.twoColumnRow(`   ${qty}${unitStr} x Rs.${rate}`, `Rs.${amt}`, true, TEXT_SIZE.NORMAL);
+    // 2. Qty x Rate (Left) and Total Amount (Right) - Increased Number Size (DOUBLE_HEIGHT)
+    b.twoColumnRow(`   ${qty}${unitStr} x Rs.${rate}`, `Rs.${amt}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
 
     // Space between items
     if (idx < items.length - 1) {
@@ -360,15 +360,15 @@ export function buildBillEscPos(billData, paperWidth = 42) {
 
   b.divider();
 
-  // 5. Compact Financial Summary
+  // 5. Compact Financial Summary (Large Numbers)
   const subtotal = data.subtotal ?? items.reduce((sum, it) => sum + (Number(it.amount) || (Number(it.quantity) * Number(it.rate))), 0);
   const total = Number(data.total ?? data.total_amount ?? subtotal);
   const paid = Number(data.amountPaid ?? data.amount_paid ?? 0);
   const balance = Number(data.balanceDue ?? data.balance_due ?? Math.max(0, total - paid));
 
   b.twoColumnRow("TOTAL AMOUNT:", `Rs.${total.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
-  b.twoColumnRow(`Paid (${payMode}):`, `Rs.${paid.toFixed(2)}`, false, TEXT_SIZE.NORMAL);
-  b.twoColumnRow("Balance Due:", `Rs.${balance.toFixed(2)}`, balance > 0, TEXT_SIZE.NORMAL);
+  b.twoColumnRow(`Paid (${payMode}):`, `Rs.${paid.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
+  b.twoColumnRow("Balance Due:", `Rs.${balance.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
   b.doubleDivider();
 
   // 6. Payment Installments Recorded (if any)
