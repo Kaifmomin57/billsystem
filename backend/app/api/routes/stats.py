@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 from datetime import datetime
 from typing import Dict, Any
 
@@ -19,29 +19,45 @@ def get_dashboard_stats(
     total_customers = db.query(Customer).filter(Customer.is_active == True).count()
     total_products  = db.query(Product).filter(Product.is_active == True).count()
     
-    # Query all active customer bills for financial analytics
-    bills_query = db.query(Bill).join(Customer, Customer.id == Bill.customer_id)
-    total_bills  = bills_query.count()
-    
-    total_sales    = float(db.query(func.sum(Bill.total_amount)).scalar() or 0.0)
-    received_pay   = float(db.query(func.sum(Bill.amount_paid)).scalar() or 0.0)
-    balance_pay    = float(db.query(func.sum(Bill.balance_due)).scalar() or 0.0)
-    
-    # Today's stats
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
-    today_bills   = bills_query.filter(Bill.bill_date == today_str).count()
-    today_sales   = float(db.query(func.sum(Bill.total_amount)).filter(Bill.bill_date == today_str).scalar() or 0.0)
-    today_received = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.bill_date == today_str).scalar() or 0.0)
-    
-    # Payment status count breakdown
-    paid_count    = bills_query.filter(Bill.payment_status == "paid").count()
-    partial_count = bills_query.filter(Bill.payment_status == "partial").count()
-    unpaid_count  = bills_query.filter(Bill.payment_status == "unpaid").count()
-    
-    # Payment method breakdown
-    cash_total = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.payment_method == "Cash").scalar() or 0.0)
-    upi_total  = float(db.query(func.sum(Bill.amount_paid)).filter(Bill.payment_method == "UPI").scalar() or 0.0)
-    mixed_total= float(db.query(func.sum(Bill.amount_paid)).filter(Bill.payment_method == "Mixed").scalar() or 0.0)
+
+    # Combined single query for financial & status metrics (eliminates 12 individual queries)
+    stats_row = (
+        db.query(
+            func.count(Bill.id).label("total_bills"),
+            func.coalesce(func.sum(Bill.total_amount), 0).label("total_sales"),
+            func.coalesce(func.sum(Bill.amount_paid), 0).label("received_pay"),
+            func.coalesce(func.sum(Bill.balance_due), 0).label("balance_pay"),
+            # Today
+            func.coalesce(func.sum(case((Bill.bill_date == today_str, Bill.total_amount), else_=0)), 0).label("today_sales"),
+            func.coalesce(func.sum(case((Bill.bill_date == today_str, Bill.amount_paid), else_=0)), 0).label("today_received"),
+            func.coalesce(func.sum(case((Bill.bill_date == today_str, 1), else_=0)), 0).label("today_bills"),
+            # Status counts
+            func.coalesce(func.sum(case((Bill.payment_status == "paid", 1), else_=0)), 0).label("paid_count"),
+            func.coalesce(func.sum(case((Bill.payment_status == "partial", 1), else_=0)), 0).label("partial_count"),
+            func.coalesce(func.sum(case((Bill.payment_status == "unpaid", 1), else_=0)), 0).label("unpaid_count"),
+            # Method sums
+            func.coalesce(func.sum(case((Bill.payment_method == "Cash", Bill.amount_paid), else_=0)), 0).label("cash_total"),
+            func.coalesce(func.sum(case((Bill.payment_method == "UPI", Bill.amount_paid), else_=0)), 0).label("upi_total"),
+            func.coalesce(func.sum(case((Bill.payment_method == "Mixed", Bill.amount_paid), else_=0)), 0).label("mixed_total"),
+        )
+        .join(Customer, Customer.id == Bill.customer_id)
+        .first()
+    )
+
+    total_bills   = int(stats_row.total_bills or 0)
+    total_sales   = float(stats_row.total_sales or 0.0)
+    received_pay  = float(stats_row.received_pay or 0.0)
+    balance_pay   = float(stats_row.balance_pay or 0.0)
+    today_sales   = float(stats_row.today_sales or 0.0)
+    today_received= float(stats_row.today_received or 0.0)
+    today_bills   = int(stats_row.today_bills or 0)
+    paid_count    = int(stats_row.paid_count or 0)
+    partial_count = int(stats_row.partial_count or 0)
+    unpaid_count  = int(stats_row.unpaid_count or 0)
+    cash_total    = float(stats_row.cash_total or 0.0)
+    upi_total     = float(stats_row.upi_total or 0.0)
+    mixed_total   = float(stats_row.mixed_total or 0.0)
     
     # Top debtors (customers with pending balance)
     top_debtors_raw = (
@@ -69,21 +85,20 @@ def get_dashboard_stats(
         for d in top_debtors_raw
     ]
 
-    # Recent bills — only show bills with a valid (existing) customer
+    # Recent bills — eager load Customer in 1 query
     recent_bills = (
         db.query(Bill)
-        .join(Customer, Customer.id == Bill.customer_id)   # INNER JOIN = excludes orphans
+        .join(Customer, Customer.id == Bill.customer_id)
+        .options(joinedload(Bill.customer))
         .order_by(Bill.created_at.desc())
         .limit(5)
         .all()
     )
-    recent_bills_data = []
-    for b in recent_bills:
-        cust = db.query(Customer).filter(Customer.id == b.customer_id).first()
-        recent_bills_data.append({
+    recent_bills_data = [
+        {
             "id": b.id,
             "bill_no": b.bill_no,
-            "customer_name": cust.name if cust else "Unknown",
+            "customer_name": b.customer.name if b.customer else "Unknown",
             "bill_date": b.bill_date,
             "total_amount": float(b.total_amount or 0),
             "amount_paid": float(b.amount_paid or 0),
@@ -91,7 +106,9 @@ def get_dashboard_stats(
             "payment_status": b.payment_status or "unpaid",
             "payment_method": b.payment_method or "Cash",
             "source": b.source
-        })
+        }
+        for b in recent_bills
+    ]
 
     return {
         "total_customers": total_customers,

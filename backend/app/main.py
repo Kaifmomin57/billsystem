@@ -19,6 +19,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+from fastapi.middleware.gzip import GZipMiddleware
+from datetime import datetime
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -28,9 +31,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# GZip compression (compresses responses over 1KB, speeding up API downloads over network)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # Mount uploads directory for images
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 app.mount("/media", StaticFiles(directory=settings.UPLOAD_DIR), name="media")
+
+# Keep-alive & Health Check endpoint (ultra lightweight, no DB query)
+@app.get("/health", tags=["system"])
+@app.get("/", tags=["system"])
+def health_check():
+    return {
+        "status": "ok",
+        "service": settings.APP_NAME,
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 # Include API routers
 app.include_router(auth.router)
@@ -115,6 +131,25 @@ def _run_schema_migrations():
                     log.info("Migration applied (or already existed): %s", m["description"])
             except Exception as exc:
                 log.warning("Schema migration warning [%s]: %s", m["description"], exc)
+
+        # Performance indexes for fast querying on Render PostgreSQL / SQLite
+        indexes = [
+            ("idx_bills_customer_id", "CREATE INDEX IF NOT EXISTS idx_bills_customer_id ON bills(customer_id);"),
+            ("idx_bills_payment_status", "CREATE INDEX IF NOT EXISTS idx_bills_payment_status ON bills(payment_status);"),
+            ("idx_bills_bill_date", "CREATE INDEX IF NOT EXISTS idx_bills_bill_date ON bills(bill_date);"),
+            ("idx_bills_created_at", "CREATE INDEX IF NOT EXISTS idx_bills_created_at ON bills(created_at);"),
+            ("idx_bill_items_bill_id", "CREATE INDEX IF NOT EXISTS idx_bill_items_bill_id ON bill_items(bill_id);"),
+            ("idx_bill_items_product_id", "CREATE INDEX IF NOT EXISTS idx_bill_items_product_id ON bill_items(product_id);"),
+            ("idx_payment_installments_bill_id", "CREATE INDEX IF NOT EXISTS idx_payment_installments_bill_id ON payment_installments(bill_id);"),
+            ("idx_customer_rates_customer_id", "CREATE INDEX IF NOT EXISTS idx_customer_rates_customer_id ON customer_rates(customer_id);"),
+            ("idx_customer_rates_product_id", "CREATE INDEX IF NOT EXISTS idx_customer_rates_product_id ON customer_rates(product_id);"),
+        ]
+        for idx_name, idx_sql in indexes:
+            try:
+                conn.execute(text(idx_sql))
+                conn.commit()
+            except Exception as exc:
+                log.warning("Index creation warning [%s]: %s", idx_name, exc)
 
 
 @app.on_event("startup")

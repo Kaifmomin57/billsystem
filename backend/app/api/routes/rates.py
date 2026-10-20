@@ -130,17 +130,19 @@ def list_customer_rates(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(CustomerRate)
+    query = (
+        db.query(CustomerRate, Customer.name.label("customer_name"), Product.name.label("product_name"), Product.unit.label("product_unit"))
+        .join(Customer, Customer.id == CustomerRate.customer_id)
+        .join(Product, Product.id == CustomerRate.product_id)
+    )
     if customer_id:
         query = query.filter(CustomerRate.customer_id == customer_id)
     if product_id:
         query = query.filter(CustomerRate.product_id == product_id)
         
-    rates = query.all()
+    rows = query.order_by(Customer.name.asc(), Product.name.asc()).all()
     results = []
-    for r in rates:
-        cust = db.query(Customer).filter(Customer.id == r.customer_id).first()
-        prod = db.query(Product).filter(Product.id == r.product_id).first()
+    for r, c_name, p_name, p_unit in rows:
         results.append(CustomerRateOut(
             id=r.id,
             customer_id=r.customer_id,
@@ -148,9 +150,9 @@ def list_customer_rates(
             rate=float(r.rate),
             live_rate=float(r.live_rate) if r.live_rate is not None else None,
             updated_at=r.updated_at,
-            customer_name=cust.name if cust else None,
-            product_name=prod.name if prod else None,
-            unit=prod.unit if prod else None
+            customer_name=c_name,
+            product_name=p_name,
+            unit=p_unit
         ))
     return results
 
@@ -346,27 +348,86 @@ def get_rate_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(RateHistory)
+    query = (
+        db.query(
+            RateHistory,
+            Product.name.label("product_name"),
+            Customer.name.label("customer_name")
+        )
+        .join(Product, Product.id == RateHistory.product_id)
+        .outerjoin(Customer, Customer.id == RateHistory.customer_id)
+    )
     if product_id:
         query = query.filter(RateHistory.product_id == product_id)
     if customer_id:
         query = query.filter(RateHistory.customer_id == customer_id)
-    history = query.order_by(RateHistory.changed_at.desc()).limit(100).all()
+    rows = query.order_by(RateHistory.changed_at.desc()).limit(100).all()
     
     results = []
-    for h in history:
-        prod = db.query(Product).filter(Product.id == h.product_id).first()
-        cust = db.query(Customer).filter(Customer.id == h.customer_id).first() if h.customer_id else None
+    for h, p_name, c_name in rows:
         results.append({
             "id": h.id,
             "rate_type": h.rate_type,
             "product_id": h.product_id,
-            "product_name": prod.name if prod else None,
+            "product_name": p_name,
             "customer_id": h.customer_id,
-            "customer_name": cust.name if cust else None,
+            "customer_name": c_name,
             "old_rate": float(h.old_rate) if h.old_rate is not None else None,
             "new_rate": float(h.new_rate),
             "changed_by": h.changed_by,
             "changed_at": h.changed_at.isoformat()
         })
+    return results
+
+
+@router.get("/effective-batch")
+def get_effective_rates_batch(
+    customer_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Returns effective rates for all active products in ONE single API call,
+    eliminating 30+ separate HTTP requests when creating/editing bills.
+    """
+    products = db.query(Product).filter(Product.is_active == True).order_by(Product.name.asc()).all()
+    if not products:
+        return []
+
+    base_rates = {r.product_id: r for r in db.query(ProductRate).all()}
+
+    customer_rates = {}
+    if customer_id:
+        cr_list = db.query(CustomerRate).filter(CustomerRate.customer_id == customer_id).all()
+        customer_rates = {r.product_id: r for r in cr_list}
+
+    results = []
+    for p in products:
+        cr = customer_rates.get(p.id)
+        pr = base_rates.get(p.id)
+
+        if cr is not None and cr.rate is not None:
+            rate = float(cr.rate)
+            live_rate = float(cr.live_rate) if cr.live_rate is not None else (float(pr.live_rate) if pr and pr.live_rate is not None else None)
+            rate_type = "customer"
+        elif pr is not None and pr.rate is not None:
+            rate = float(pr.rate)
+            live_rate = float(pr.live_rate) if pr.live_rate is not None else None
+            rate_type = "base"
+        else:
+            rate = 0.0
+            live_rate = None
+            rate_type = "none"
+
+        results.append({
+            "product_id": p.id,
+            "product_name": p.name,
+            "name": p.name,
+            "unit": p.unit or "pcs",
+            "rate": rate,
+            "live_rate": live_rate,
+            "rate_type": rate_type,
+            "quantity": ""
+        })
+
     return results

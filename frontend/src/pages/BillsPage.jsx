@@ -59,11 +59,13 @@ export default function BillsPage() {
   const { data: customers = [] } = useQuery({
     queryKey: ["customers"],
     queryFn: async () => (await api.get("/customers")).data,
+    staleTime: 5 * 60_000,  // customers rarely change — 5min cache
   });
 
   const { data: products = [] } = useQuery({
     queryKey: ["products", "active"],
     queryFn: async () => (await api.get("/products?is_active=true")).data,
+    staleTime: 5 * 60_000,  // products rarely change — 5min cache
   });
 
   // Fetch Bills with filters
@@ -92,7 +94,13 @@ export default function BillsPage() {
   // Create Bill Mutation
   const createMutation = useMutation({
     mutationFn: (payload) => api.post("/bills", payload),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      if (res?.data) {
+        queryClient.setQueriesData(
+          { queryKey: ["bills"] },
+          (old) => (Array.isArray(old) ? [res.data, ...old.filter((b) => b.id !== res.data.id)] : [res.data])
+        );
+      }
       queryClient.invalidateQueries(["bills"]);
       queryClient.invalidateQueries(["dashboard-stats"]);
       toast.success("Bill created successfully!");
@@ -106,7 +114,13 @@ export default function BillsPage() {
   // Update Bill Mutation
   const updateBillMutation = useMutation({
     mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}`, payload),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      if (res?.data) {
+        queryClient.setQueriesData(
+          { queryKey: ["bills"] },
+          (old) => (Array.isArray(old) ? old.map((b) => (b.id === res.data.id ? res.data : b)) : [res.data])
+        );
+      }
       queryClient.invalidateQueries(["bills"]);
       queryClient.invalidateQueries(["dashboard-stats"]);
       toast.success("Bill updated successfully!");
@@ -121,7 +135,13 @@ export default function BillsPage() {
   // Payment Record Mutation
   const paymentMutation = useMutation({
     mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}/payment`, payload),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      if (res?.data) {
+        queryClient.setQueriesData(
+          { queryKey: ["bills"] },
+          (old) => (Array.isArray(old) ? old.map((b) => (b.id === res.data.id ? res.data : b)) : [res.data])
+        );
+      }
       queryClient.invalidateQueries(["bills"]);
       queryClient.invalidateQueries(["dashboard-stats"]);
       toast.success("Payment recorded successfully!");
@@ -230,19 +250,18 @@ export default function BillsPage() {
 
   const fetchAllRates = async (productList, customerId) => {
     setRatesLoading(true);
-    const rows = await Promise.all(
-      productList.map(async (p) => {
-        try {
-          const custParam = customerId ? `&customer_id=${customerId}` : "";
-          const res = await api.get(`/rates/effective?product_id=${p.id}${custParam}`);
-          return { product_id: p.id, name: p.name, unit: p.unit, rate: res.data.rate ?? 0, rate_type: res.data.rate_type ?? "none", quantity: "" };
-        } catch {
-          return { product_id: p.id, name: p.name, unit: p.unit, rate: 0, rate_type: "none", quantity: "" };
-        }
-      })
-    );
-    setRatesLoading(false);
-    return rows;
+    try {
+      const custParam = customerId ? `?customer_id=${customerId}` : "";
+      const res = await api.get(`/rates/effective-batch${custParam}`);
+      if (Array.isArray(res.data) && res.data.length > 0) {
+        return res.data;
+      }
+    } catch (err) {
+      console.warn("Batch rates fetch error, falling back to empty rows:", err);
+    } finally {
+      setRatesLoading(false);
+    }
+    return buildEmptyRows(productList);
   };
 
   const openManualModal = async () => {

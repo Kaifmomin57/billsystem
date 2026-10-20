@@ -2,7 +2,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import func
 
 from app.core.database import get_db
@@ -48,6 +48,10 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
     bills = (
         db.query(Bill)
         .join(Customer, Customer.id == Bill.customer_id)
+        .options(
+            joinedload(Bill.customer),
+            selectinload(Bill.items).joinedload(BillItem.product)
+        )
         .filter(Bill.bill_date >= start, Bill.bill_date <= end)
         .order_by(Customer.name, Bill.bill_date, Bill.id)
         .all()

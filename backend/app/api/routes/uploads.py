@@ -7,7 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -44,16 +44,39 @@ def _match_or_find_customer(name_raw: str, db: Session) -> Optional[Customer]:
     return None
 
 def _enrich_draft(draft: Dict[str, Any], db: Session) -> Dict[str, Any]:
-    """Enrich rows with customer IDs, resolved product IDs, and expected rates"""
-    # Column mappings
+    """Enrich rows with customer IDs, resolved product IDs, and expected rates (batch optimized in-memory)"""
+    # 1. Column mappings
     active_mappings = db.query(ColumnMapping).filter(ColumnMapping.active == True).all()
     col_mappings = {m.column_code: m.product_id for m in active_mappings}
     
-    # Ensure column_codes includes all active configured columns + any extra extracted codes
     active_codes = [m.column_code for m in active_mappings]
     parsed_codes = draft.get("column_codes") or []
     codes_list = list(dict.fromkeys(parsed_codes + active_codes))
     
+    # 2. Batch load all customers, aliases, and rates to avoid queries in loops
+    all_custs = db.query(Customer).all()
+    cust_name_map = {c.name.strip().lower(): c for c in all_custs if c.name}
+    
+    all_aliases = db.query(CustomerAlias).options(joinedload(CustomerAlias.customer)).all()
+    alias_map = {a.alias.strip().lower(): a.customer for a in all_aliases if a.customer and a.alias}
+    
+    all_cr = {(r.customer_id, r.product_id): float(r.rate) for r in db.query(CustomerRate).all()}
+    all_pr = {r.product_id: float(r.rate) for r in db.query(ProductRate).all()}
+
+    def _match_customer_in_memory(name_raw: str) -> Optional[Customer]:
+        if not name_raw:
+            return None
+        nc = name_raw.strip().lower()
+        if nc in cust_name_map:
+            return cust_name_map[nc]
+        if nc in alias_map:
+            return alias_map[nc]
+        for c in all_custs:
+            c_low = c.name.strip().lower()
+            if nc in c_low or c_low in nc:
+                return c
+        return None
+
     rows = draft.get("rows", [])
     for row in rows:
         c_raw = (
@@ -65,7 +88,7 @@ def _enrich_draft(draft: Dict[str, Any], db: Session) -> Dict[str, Any]:
             ""
         ).strip()
         row["customer_name_raw"] = c_raw
-        matched_cust = _match_or_find_customer(c_raw, db) if c_raw else None
+        matched_cust = _match_customer_in_memory(c_raw) if c_raw else None
         row["customer_id"] = matched_cust.id if matched_cust else None
         row["customer_name"] = matched_cust.name if matched_cust else c_raw
         row["is_new_customer"] = matched_cust is None
@@ -78,15 +101,13 @@ def _enrich_draft(draft: Dict[str, Any], db: Session) -> Dict[str, Any]:
             prod_id = col_mappings.get(col_code)
             c_data["product_id"] = prod_id
             
-            # Rate lookup & mismatch warning
+            # Fast in-memory Rate lookup
             expected_rate = None
             if prod_id:
-                if matched_cust:
-                    cr = db.query(CustomerRate).filter(CustomerRate.customer_id == matched_cust.id, CustomerRate.product_id == prod_id).first()
-                    if cr: expected_rate = float(cr.rate)
-                if expected_rate is None:
-                    pr = db.query(ProductRate).filter(ProductRate.product_id == prod_id).first()
-                    if pr: expected_rate = float(pr.rate)
+                if matched_cust and (matched_cust.id, prod_id) in all_cr:
+                    expected_rate = all_cr[(matched_cust.id, prod_id)]
+                if expected_rate is None and prod_id in all_pr:
+                    expected_rate = all_pr[prod_id]
             
             c_data["expected_rate"] = expected_rate
             if c_data.get("rate") is None and expected_rate is not None:

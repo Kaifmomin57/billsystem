@@ -19,7 +19,12 @@ const PrinterPage   = lazy(() => import("./pages/PrinterPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 30_000 },
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+      staleTime: 60_000,       // 1 min: don't re-fetch if data is fresh
+      gcTime: 5 * 60_000,      // 5 min: keep unused data in memory
+    },
   },
 });
 

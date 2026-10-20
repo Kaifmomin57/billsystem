@@ -30,4 +30,22 @@ api.interceptors.response.use(
   }
 );
 
+/**
+ * Render Keep-Alive: Ping /health every 10 minutes to prevent Render free-tier
+ * from spinning down the server (which causes 50-90s cold start delays).
+ * Uses a no-auth plain fetch to avoid JWT dependency at module load time.
+ */
+const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+function startKeepAlivePing() {
+  const ping = () => {
+    fetch(`${API_BASE_URL}/health`, { method: "GET" }).catch(() => {});
+  };
+  ping(); // immediate ping on first load
+  setInterval(ping, PING_INTERVAL_MS);
+}
+// Only ping in browser context
+if (typeof window !== "undefined") {
+  startKeepAlivePing();
+}
+
 export default api;

@@ -13,11 +13,13 @@ from app.services.cloudinary_service import upload_image_to_cloudinary
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 
+from sqlalchemy.orm import joinedload, selectinload
+
 def _get_previous_unpaid_bills(bill, db):
     """Returns list of other unpaid/partial bills for the same customer, ordered by date, excluding current bill."""
     if not bill.customer_id:
         return []
-    prev_bills = (
+    return (
         db.query(Bill)
         .filter(
             Bill.customer_id == bill.customer_id,
@@ -28,12 +30,25 @@ def _get_previous_unpaid_bills(bill, db):
         .order_by(Bill.bill_date.asc(), Bill.id.asc())
         .all()
     )
-    return prev_bills
 
-def _format_bill_out(bill, db):
+def _get_bill_eager(bill_id: int, db: Session) -> Optional[Bill]:
+    """Helper to fetch a single bill with all its relationships eager loaded."""
+    return (
+        db.query(Bill)
+        .options(
+            joinedload(Bill.customer),
+            selectinload(Bill.items).joinedload(BillItem.product),
+            selectinload(Bill.payment_installments),
+        )
+        .filter(Bill.id == bill_id)
+        .first()
+    )
+
+def _format_single_bill(bill, all_customer_unpaid=None):
+    """In-memory formatter: 0 SQL queries executed."""
     items_out = []
-    for item in bill.items:
-        prod = db.query(Product).filter(Product.id == item.product_id).first() if item.product_id else None
+    for item in (bill.items or []):
+        prod = item.product
         items_out.append(BillItemOut(
             id=item.id, bill_id=item.bill_id, product_id=item.product_id,
             product_name=prod.name if prod else None,
@@ -43,20 +58,25 @@ def _format_bill_out(bill, db):
             confidence=float(item.confidence) if item.confidence is not None else 1.0,
             raw_text=item.raw_text
         ))
-    cust = db.query(Customer).filter(Customer.id == bill.customer_id).first() if bill.customer_id else None
+    cust = bill.customer
     tot = float(bill.total_amount or 0)
     paid = float(bill.amount_paid or 0)
     bal = float(bill.balance_due if bill.balance_due is not None else max(0.0, tot - paid))
     p_status = bill.payment_status or ("paid" if paid >= tot and tot > 0 else "partial" if paid > 0 else "unpaid")
     history_out = []
-    for inst in bill.payment_installments:
+    for inst in (bill.payment_installments or []):
         history_out.append(PaymentInstallmentOut(
             id=inst.id, bill_id=inst.bill_id, amount=float(inst.amount),
             payment_method=inst.payment_method, note=inst.note, paid_at=inst.paid_at
         ))
-    # Carry forward: sum balance from older unpaid bills
-    prev_bills_db = _get_previous_unpaid_bills(bill, db)
-    prev_balance = sum(float(pb.balance_due or 0) for pb in prev_bills_db)
+
+    # Older unpaid bills (excluding current bill)
+    if all_customer_unpaid:
+        prev_bills_list = [pb for pb in all_customer_unpaid if pb.id != bill.id]
+    else:
+        prev_bills_list = []
+
+    prev_balance = sum(float(pb.balance_due or 0) for pb in prev_bills_list)
     total_due_cf = bal + prev_balance
     prev_bills_out = [
         {
@@ -66,7 +86,7 @@ def _format_bill_out(bill, db):
             "amount_paid": float(pb.amount_paid or 0),
             "balance_due": float(pb.balance_due or 0),
         }
-        for pb in prev_bills_db
+        for pb in prev_bills_list
     ]
     return BillOut(
         id=bill.id, customer_id=bill.customer_id,
@@ -84,6 +104,34 @@ def _format_bill_out(bill, db):
         previous_bills=prev_bills_out
     )
 
+def _format_bill_out(bill, db):
+    prev_bills = _get_previous_unpaid_bills(bill, db) if db else []
+    return _format_single_bill(bill, prev_bills)
+
+def _format_bills_batch(bills, db: Session):
+    """Batch formats a list of bills with 1 query for all customer previous unpaid balances."""
+    if not bills:
+        return []
+
+    cust_ids = list({b.customer_id for b in bills if b.customer_id})
+    unpaid_by_customer = {cid: [] for cid in cust_ids}
+    if cust_ids:
+        all_unpaid = (
+            db.query(Bill)
+            .filter(
+                Bill.customer_id.in_(cust_ids),
+                Bill.payment_status.in_(["unpaid", "partial"]),
+                Bill.balance_due > 0,
+            )
+            .order_by(Bill.bill_date.asc(), Bill.id.asc())
+            .all()
+        )
+        for ub in all_unpaid:
+            if ub.customer_id in unpaid_by_customer:
+                unpaid_by_customer[ub.customer_id].append(ub)
+
+    return [_format_single_bill(b, unpaid_by_customer.get(b.customer_id, [])) for b in bills]
+
 @router.get("", response_model=List[BillOut])
 def list_bills(
     customer_id: Optional[int] = None, start_date: Optional[str] = None,
@@ -91,14 +139,22 @@ def list_bills(
     limit: int = 100, db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(Bill).join(Customer, Customer.id == Bill.customer_id)  # excludes orphan bills
+    query = (
+        db.query(Bill)
+        .join(Customer, Customer.id == Bill.customer_id)
+        .options(
+            joinedload(Bill.customer),
+            selectinload(Bill.items).joinedload(BillItem.product),
+            selectinload(Bill.payment_installments),
+        )
+    )
     if customer_id: query = query.filter(Bill.customer_id == customer_id)
     if start_date: query = query.filter(Bill.bill_date >= start_date)
     if end_date: query = query.filter(Bill.bill_date <= end_date)
     if source and source.strip() and source.lower() != "all":
         query = query.filter(Bill.source == source.strip())
     bills = query.order_by(Bill.bill_date.desc(), Bill.id.desc()).limit(limit).all()
-    return [_format_bill_out(b, db) for b in bills]
+    return _format_bills_batch(bills, db)
 
 @router.post("", response_model=BillOut)
 def create_manual_bill(data: BillCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -132,8 +188,8 @@ def create_manual_bill(data: BillCreate, db: Session = Depends(get_db), current_
             note="Initial payment at bill creation"
         ))
     db.commit()
-    db.refresh(bill)
-    return _format_bill_out(bill, db)
+    eager_bill = _get_bill_eager(bill.id, db)
+    return _format_bill_out(eager_bill, db)
 
 # IMPORTANT: Specific routes must come BEFORE generic {bill_id} route
 
@@ -217,7 +273,7 @@ def bulk_send_whatsapp(payload: BulkWhatsAppRequest, db: Session = Depends(get_d
 
 @router.get("/{bill_id}", response_model=BillOut)
 def get_bill(bill_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    bill = _get_bill_eager(bill_id, db)
     if not bill: raise HTTPException(status_code=404, detail="Bill not found")
     return _format_bill_out(bill, db)
 
@@ -279,8 +335,8 @@ def edit_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db), cur
             ))
     
     db.commit()
-    db.refresh(bill)
-    return _format_bill_out(bill, db)
+    eager_bill = _get_bill_eager(bill_id, db)
+    return _format_bill_out(eager_bill, db)
 
 @router.put("/{bill_id}/payment", response_model=BillOut)
 def update_bill_payment(bill_id: int, data: BillPaymentUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -311,8 +367,8 @@ def update_bill_payment(bill_id: int, data: BillPaymentUpdate, db: Session = Dep
     bill.payment_method = combined_method
     db.add(PaymentInstallment(bill_id=bill.id, amount=installment, payment_method=new_method, note=data.note))
     db.commit()
-    db.refresh(bill)
-    return _format_bill_out(bill, db)
+    eager_bill = _get_bill_eager(bill_id, db)
+    return _format_bill_out(eager_bill, db)
 
 @router.delete("/{bill_id}")
 def delete_bill(bill_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

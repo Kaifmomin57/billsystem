@@ -50,8 +50,8 @@ class ProductRate(Base):
 class CustomerRate(Base):
     __tablename__ = "customer_rates"
     id          = Column(Integer, primary_key=True, index=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"))
-    product_id  = Column(Integer, ForeignKey("products.id"))
+    customer_id = Column(Integer, ForeignKey("customers.id"), index=True)
+    product_id  = Column(Integer, ForeignKey("products.id"), index=True)
     rate        = Column(Numeric(12, 2), nullable=False)
     live_rate   = Column(Numeric(12, 2), nullable=True)  # Custom live fish rate for customer
     updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -98,19 +98,19 @@ class Upload(Base):
 class Bill(Base):
     __tablename__ = "bills"
     id            = Column(Integer, primary_key=True, index=True)
-    customer_id   = Column(Integer, ForeignKey("customers.id"))
+    customer_id   = Column(Integer, ForeignKey("customers.id"), index=True)
     bill_no       = Column(String(50), unique=True)
     bill_date     = Column(String(20), index=True)
     total_amount   = Column(Numeric(12, 2), default=0)
     amount_paid    = Column(Numeric(12, 2), default=0)
     balance_due    = Column(Numeric(12, 2), default=0)
-    payment_status = Column(String(20), default="unpaid")    # paid | partial | unpaid
+    payment_status = Column(String(20), default="unpaid", index=True)    # paid | partial | unpaid
     payment_method = Column(String(20), default="Cash")      # Cash | UPI | Mixed
     source         = Column(String(20), default="manual")    # manual | ledger_ai | bill_ai
     upload_id      = Column(Integer, ForeignKey("uploads.id"), nullable=True)
     image_path     = Column(String(500))
     status         = Column(String(20), default="active")
-    created_at     = Column(DateTime, default=datetime.utcnow)
+    created_at     = Column(DateTime, default=datetime.utcnow, index=True)
     customer      = relationship("Customer", back_populates="bills")
     upload        = relationship("Upload", back_populates="bills")
     items         = relationship("BillItem", back_populates="bill")
@@ -120,8 +120,8 @@ class Bill(Base):
 class BillItem(Base):
     __tablename__ = "bill_items"
     id               = Column(Integer, primary_key=True, index=True)
-    bill_id          = Column(Integer, ForeignKey("bills.id"))
-    product_id       = Column(Integer, ForeignKey("products.id"), nullable=True)
+    bill_id          = Column(Integer, ForeignKey("bills.id"), index=True)
+    product_id       = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
     quantity         = Column(Numeric(12, 3))
     rate             = Column(Numeric(12, 2))
     amount           = Column(Numeric(12, 2))
@@ -137,7 +137,7 @@ class BillItem(Base):
 class PaymentInstallment(Base):
     __tablename__ = "payment_installments"
     id             = Column(Integer, primary_key=True, index=True)
-    bill_id        = Column(Integer, ForeignKey("bills.id"), nullable=False)
+    bill_id        = Column(Integer, ForeignKey("bills.id"), nullable=False, index=True)
     amount         = Column(Numeric(12, 2), nullable=False)
     payment_method = Column(String(20), default="Cash")  # Cash | UPI | Mixed
     note           = Column(String(255), nullable=True)
@@ -148,7 +148,7 @@ class PaymentInstallment(Base):
 class CustomerAlias(Base):
     __tablename__ = "customer_aliases"
     id          = Column(Integer, primary_key=True, index=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"))
+    customer_id = Column(Integer, ForeignKey("customers.id"), index=True)
     alias       = Column(String(255), index=True)
     customer    = relationship("Customer", back_populates="aliases")
 
