@@ -22,20 +22,20 @@ def preprocess_image(input_path: str, output_path: str = None) -> str:
             if img.mode != "RGB":
                 img = img.convert("RGB")
             
-            # Resize if too large, maintaining aspect ratio
-            max_dimension = 2400
+            # Resize if too large, maintaining aspect ratio (1800px is optimal for OCR speed and accuracy)
+            max_dimension = 1800
             if max(img.size) > max_dimension:
                 img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
             
             # Contrast enhancement
             enhancer = ImageEnhance.Contrast(img)
-            img = enhancer.enhance(1.3)
+            img = enhancer.enhance(1.25)
             
             # Sharpness enhancement
             sharpener = ImageEnhance.Sharpness(img)
-            img = sharpener.enhance(1.4)
+            img = sharpener.enhance(1.35)
             
-            img.save(output_path, quality=90)
+            img.save(output_path, "JPEG", quality=85, optimize=True)
             return output_path
     except Exception as e:
         # Fallback to original if processing fails

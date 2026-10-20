@@ -17,44 +17,74 @@ MODELS = [
     "gemini-3-flash-preview",
 ]
 
-LEDGER_PROMPT = """You are an expert document AI parsing a handwritten Indian business ledger page.
-Analyze the image and return ONLY valid JSON matching exactly this schema:
+LEDGER_PROMPT = """You are an expert document AI parsing Indian business ledgers and handwritten sales slips (e.g. fish, poultry, mandi trade).
+Analyze the image with extreme precision and return ONLY valid JSON matching this schema:
 
 {
-  "page_date": "YYYY-MM-DD or raw date string from page",
-  "column_codes": ["M", "R", "B", "P", "K", "T", "JB"],
+  "page_date": "YYYY-MM-DD or raw date string from page or null",
+  "column_codes": ["..."],
   "rows": [
     {
       "customer_name_raw": "Patil",
       "cells": {
-        "M": {"quantity": 6.5, "rate": null, "tag": null, "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "6.5", "confidence": 0.95},
-        "R": {"quantity": 8.4, "rate": 12.2, "tag": null, "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "8.4", "confidence": 0.95},
-        "B": {"quantity": null, "rate": null, "tag": null, "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "", "confidence": 0.95},
-        "P": {"quantity": 7.0, "rate": null, "tag": null, "circled_value": "7", "is_live": true, "struck_out": false, "raw_text": "(7)", "confidence": 0.95},
-        "K": {"quantity": 3.6, "rate": null, "tag": "mi", "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "3.6 mi", "confidence": 0.95},
-        "T": {"quantity": 40.0, "rate": null, "tag": null, "circled_value": "40", "is_live": true, "struck_out": false, "raw_text": "(40)", "confidence": 0.95},
-        "JB": {"quantity": null, "rate": null, "tag": null, "circled_value": null, "is_live": false, "struck_out": false, "raw_text": "", "confidence": 0.95}
+        "COLUMN_CODE": {
+          "quantity": 5.5,
+          "rate": null,
+          "tag": null,
+          "circled_value": null,
+          "is_live": false,
+          "struck_out": false,
+          "raw_text": "5.5 T",
+          "confidence": 0.95
+        }
       }
     }
   ]
 }
 
-Rules:
-1. ALWAYS extract the customer name written in the 'NAME' / 'नाम' / left column for every row into `customer_name_raw` (e.g. Patil, Irfan, Baba, Manoj, Ramvir, Vikas, Rashid, Vaishali, Gopi, Somchand, Jami, Hafiz, Sharik, etc.). Never leave `customer_name_raw` empty.
-2. Read the top header row of the table grid carefully. Identify ALL column header codes (e.g., M, R, B, P, K, T, JB and any other column code).
-3. Extract ALL customer rows visible on the page. For every single customer row, include a cell entry for every header column.
-4. For fraction notation (e.g. 39 over 50), set quantity=39, rate=50.
-5. Capture suffix letters (pd, mi, N, B, R, k, K, T, JB) as tag.
-6. CIRCLED NUMBERS = LIVE FISH (CRITICAL):
-   - In Indian fish trading ledgers, any number written inside a handwritten drawn circle, oval, ring, or parentheses (e.g. ⊚40, (40), circled 7 in red ink, circled 80 in red, circled 60, circled 100) indicates LIVE FISH (जिंदा / जीवंत मछली).
+CRITICAL RULES:
+0. ORIENTATION & ROTATION (CRITICAL):
+   The photo might be taken sideways (rotated 90° or 270°) or in landscape/skewed orientation. First detect the primary text reading direction from customer names and numbers, and extract all rows and columns along the true text lines regardless of image rotation.
+
+1. HORIZONTAL LINE ALIGNMENT (CRITICAL):
+   - In lined/ruled notebooks, each customer occupies EXACTLY ONE horizontal line row:
+     * Line 1: Customer name on left (e.g. "Vada 2") -> ALL entries on that same horizontal line from left to right belong strictly to Vada 2 (e.g. 5.5 T, 6 R, 7 sil, 9 Pd, 8 PP).
+     * Line 2: Customer name on left (e.g. "BABA") -> ALL entries on that same horizontal line from left to right belong strictly to BABA (e.g. 7.8 R, 9.2 sil, 6.7 PP, 8.9 T, 8.3 R).
+     * Line 3: Customer name on left (e.g. "Vada 4") -> ALL entries on that same horizontal line from left to right belong strictly to Vada 4 (e.g. 6.5 R, 9.25, 6.7 PP, 8.2 T, 9.7 T).
+   - NEVER move entries from one horizontal line to another!
+
+2. DETERMINE DOCUMENT FORMAT:
+   A) FIXED COLUMN-HEADER LEDGER:
+      - If the page has a top header row with column codes (e.g. M, R, B, P, K, T, JB, etc.):
+      - Extract those exact codes into `column_codes`.
+      - Place each cell under its corresponding column code header.
+      - For fraction notation (e.g. 39 over 50), set quantity=39, rate=50.
+      - Capture suffix letters (pd, mi, N, B, R, k, K, T, JB) as tag.
+
+   B) INLINE PRODUCT / SLIP FORMAT (No top header row):
+      - If product codes or names are written directly beside/next to each quantity number (e.g. "5.5 T", "6 R", "7 sil", "9 Pd", "8 PP", "7.8 R", "9.2 sil", "6.7 PP", "8.9 T", "8.3 R", "6.5 R", "9.25", "8.2 T", "9.7 T"):
+      - DO NOT force dummy headers like [M, R, B, P, K]. Instead, identify ALL distinct product codes/names written across all rows (e.g. ["T", "R", "SIL", "PD", "PP"]).
+      - Normalize column_codes to uppercase (e.g. "T", "R", "SIL", "PD", "PP").
+      - Place each quantity under its actual product code key in `cells`.
+      - If a customer row has multiple entries for the same product code (e.g. BABA has "7.8 R" and "8.3 R", or Vada 4 has "8.2 T" and "9.7 T"):
+        * Sum the quantities into `quantity` (e.g. 7.8 + 8.3 = 16.1 for R; 8.2 + 9.7 = 17.9 for T).
+        * Set `raw_text` to show both entries (e.g. "7.8R + 8.3R").
+      - If an entry has no product code written (e.g. "9.25" under column 2 where previous rows had "7 sil" and "9.2 sil"), infer the product code from column alignment (here "SIL").
+
+3. CUSTOMER NAMES:
+   Extract customer names from the left column of each row (e.g. "Patil", "Irfan", "Vada 2", "BABA", "Vada 4", "Ramvir", "Vikas", etc.). Never leave customer_name_raw empty.
+
+4. CIRCLED NUMBERS = LIVE FISH (CRITICAL):
+   In Indian fish trading ledgers, any number written inside a handwritten drawn circle, oval, ring, or parentheses (e.g. ⊚40, (40), circled 7 in red ink, circled 80, circled 60, circled 100) indicates LIVE FISH (जिंदा / जीवंत मछली).
    - The circled number IS THE QUANTITY! Set `quantity` to that numeric value (e.g. 40.0, 7.0, 80.0, 60.0, 100.0).
    - Set `is_live`: true.
    - Set `circled_value`: string of that number (e.g. "40").
    - Set `raw_text`: e.g. "(40)" or "circled 40".
    - If a cell has both a normal number and a circled number (e.g. "15 (100)"), the circled number is live fish: set `quantity`: 100.0, `is_live`: true, `circled_value`: "100".
-7. Crossed-out / struck-out values → struck_out: true, use the corrected value.
-8. Confidence: 0.0-1.0 per cell (below 0.7 = yellow flag, below 0.4 = red flag).
-9. If date not readable, set page_date to null.
+
+5. Crossed-out / struck-out values → struck_out: true, use the corrected value.
+6. Confidence: 0.0-1.0 per cell (below 0.7 = yellow flag, below 0.4 = red flag).
+7. If date not readable, set page_date to null.
 Return ONLY the raw JSON object with no markdown or explanation."""
 
 BILL_PROMPT = """Extract all bill details from this receipt or invoice image and return ONLY valid JSON:

@@ -4,6 +4,7 @@ import hashlib
 import uuid
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
+import concurrent.futures
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
@@ -16,7 +17,7 @@ from app.models.models import Upload, UploadStatus, Bill, BillItem, PaymentInsta
 from app.schemas.schemas import UploadDraftUpdate, UploadOut
 from app.services.gemini_service import analyze_image
 from app.services.excel_service import build_ledger_page_excel
-from app.services.ledger_service import resolve_ledger_rates
+from app.services.ledger_service import resolve_ledger_rates, _load_column_mappings
 from app.services.cloudinary_service import upload_image_to_cloudinary
 from app.utils.image_preprocessor import preprocess_image
 
@@ -25,12 +26,12 @@ settings = get_settings()
 
 def _enrich_draft(draft: Dict[str, Any], db: Session) -> Dict[str, Any]:
     """Enrich rows with customer IDs, resolved product IDs, and expected rates (batch optimized in-memory)"""
-    # 1. Column mappings
-    active_mappings = db.query(ColumnMapping).filter(ColumnMapping.active == True).all()
-    col_mappings = {m.column_code: m.product_id for m in active_mappings}
+    # 1. Column mappings with fallback to Product codes and abbreviations
+    col_prod_map = _load_column_mappings(db)
+    col_mappings = {code: prod.id for code, prod in col_prod_map.items()}
     
-    active_codes = [m.column_code for m in active_mappings]
-    parsed_codes = draft.get("column_codes") or []
+    parsed_codes = [str(c).strip().upper() for c in (draft.get("column_codes") or []) if c]
+    active_codes = [m.column_code.strip().upper() for m in db.query(ColumnMapping).filter(ColumnMapping.active == True).all() if m.column_code]
     codes_list = list(dict.fromkeys(parsed_codes + active_codes))
     
     # 2. Batch load all customers, aliases, and rates to avoid queries in loops
@@ -75,10 +76,11 @@ def _enrich_draft(draft: Dict[str, Any], db: Session) -> Dict[str, Any]:
         
         cells = row.get("cells", {})
         for col_code, c_data in cells.items():
-            if col_code not in codes_list:
-                codes_list.append(col_code)
+            col_up = str(col_code).strip().upper()
+            if col_up not in codes_list:
+                codes_list.append(col_up)
                 
-            prod_id = col_mappings.get(col_code)
+            prod_id = col_mappings.get(col_up)
             c_data["product_id"] = prod_id
             
             # Fast in-memory Rate lookup
@@ -130,16 +132,11 @@ async def upload_and_process_bill(
     with open(proc_path, "rb") as f:
         proc_bytes = f.read()
 
-    # Upload to Cloudinary (cloud storage)
-    cld_res = upload_image_to_cloudinary(save_path)
-    if cld_res and cld_res.get("secure_url"):
-        stored_image_path = cld_res.get("secure_url")
-        image_url = stored_image_path
-    else:
-        stored_image_path = filename
-        image_url = f"/media/{filename}"
+    # Initial file paths (local fallback immediately available)
+    stored_image_path = filename
+    image_url = f"/media/{filename}"
 
-    # Create Upload DB record
+    # Create Upload DB record immediately
     upload = Upload(
         upload_type=upload_type,
         image_path=stored_image_path,
@@ -149,14 +146,30 @@ async def upload_and_process_bill(
     db.add(upload)
     db.commit()
     db.refresh(upload)
-    
-    # Call Gemini
+
+    # Parallel execution: run Cloudinary upload and Gemini AI OCR simultaneously
     try:
-        parsed_json, meta = analyze_image(
-            proc_bytes,
-            mime_type=file.content_type or "image/jpeg",
-            upload_type=upload_type
-        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_cld = executor.submit(upload_image_to_cloudinary, save_path)
+            future_gemini = executor.submit(
+                analyze_image,
+                proc_bytes,
+                file.content_type or "image/jpeg",
+                upload_type
+            )
+
+            # Await Gemini AI result
+            parsed_json, meta = future_gemini.result()
+
+            # Process Cloudinary result if available
+            try:
+                cld_res = future_cld.result()
+                if cld_res and cld_res.get("secure_url"):
+                    stored_image_path = cld_res.get("secure_url")
+                    image_url = stored_image_path
+                    upload.image_path = stored_image_path
+            except Exception as cld_err:
+                print(f"Cloudinary background upload warning: {cld_err}")
         
         # Format draft data
         if upload_type == "ledger":

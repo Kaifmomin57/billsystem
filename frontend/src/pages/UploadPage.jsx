@@ -14,6 +14,68 @@ import toast from "react-hot-toast";
 import api, { API_BASE_URL } from "../lib/api";
 import { formatCurrency, formatDate, formatDateTime, downloadBlob } from "../lib/utils";
 
+// ─── High-performance Client-Side Image Optimizer & Rotator ─────────────────
+const processImageFile = (file, rotationAngle = 0) => {
+  return new Promise((resolve) => {
+    if (!file || !file.type.startsWith("image/")) {
+      return resolve({ file, dataUrl: null, originalSize: file?.size || 0 });
+    }
+    const origSize = file.size;
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 2000;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        const angle = ((rotationAngle % 360) + 360) % 360;
+        if (angle === 90 || angle === 270) {
+          canvas.width = height;
+          canvas.height = width;
+        } else {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        const ctx = canvas.getContext("2d");
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate((angle * Math.PI) / 180);
+        ctx.drawImage(img, -width / 2, -height / 2, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const newFile = new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), {
+                type: "image/jpeg",
+                lastModified: Date.now(),
+              });
+              const preview = URL.createObjectURL(blob);
+              resolve({ file: newFile, dataUrl: preview, originalSize: origSize });
+            } else {
+              resolve({ file, dataUrl: URL.createObjectURL(file), originalSize: origSize });
+            }
+          },
+          "image/jpeg",
+          0.85
+        );
+      };
+      img.onerror = () => resolve({ file, dataUrl: URL.createObjectURL(file), originalSize: origSize });
+      img.src = e.target.result;
+    };
+    reader.onerror = () => resolve({ file, dataUrl: URL.createObjectURL(file), originalSize: origSize });
+    reader.readAsDataURL(file);
+  });
+};
+
 // ─── Camera Guide Overlay Modal ──────────────────────────────────────────────
 function CameraGuideModal({ isOpen, onClose, onFileSelect }) {
   const fileInputRef = useRef(null);
@@ -730,9 +792,37 @@ export default function UploadPage() {
   const queryClient = useQueryClient();
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [originalFileSize, setOriginalFileSize] = useState(null);
   const [uploadType, setUploadType] = useState("ledger");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStep, setUploadStep] = useState(0);
+
+  // Fast client-side image optimization & rotation handlers
+  const handleFileSelect = async (selectedFile) => {
+    if (!selectedFile) return;
+    try {
+      const res = await processImageFile(selectedFile, 0);
+      setFile(res.file);
+      setPreviewUrl(res.dataUrl);
+      setOriginalFileSize(res.originalSize);
+    } catch {
+      setFile(selectedFile);
+      setPreviewUrl(URL.createObjectURL(selectedFile));
+      setOriginalFileSize(selectedFile.size);
+    }
+  };
+
+  const handleRotateSelectedFile = async (deg = 90) => {
+    if (!file) return;
+    try {
+      const res = await processImageFile(file, deg);
+      setFile(res.file);
+      setPreviewUrl(res.dataUrl);
+      toast.success(`Rotated photo ${deg > 0 ? "90°" : "-90°"}`);
+    } catch (e) {
+      toast.error("Failed to rotate photo");
+    }
+  };
 
   // Active workspace state
   const [activeUploadId, setActiveUploadId] = useState(null);
@@ -1285,6 +1375,7 @@ export default function UploadPage() {
     try {
       const res = await api.post("/uploads", formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120000,
       });
       clearInterval(stepInterval);
       setUploadStep(4);
@@ -1300,11 +1391,16 @@ export default function UploadPage() {
       const img = res.data.image_url;
       setPreviewUrl(img ? (img.startsWith("http") ? img : `${API_BASE_URL}${img}`) : null);
       setFile(null);
+      setOriginalFileSize(null);
       setShowBillPreview(false);
       refetchUploads();
     } catch (err) {
       clearInterval(stepInterval);
-      toast.error(err.response?.data?.detail || "AI extraction failed. Please try again with a clearer photo.");
+      const isTimeout = err.code === "ECONNABORTED" || err.message?.includes("timeout");
+      const errorMsg = isTimeout
+        ? "AI processing took longer than expected. Please retry."
+        : (err.response?.data?.detail || err.message || "AI extraction failed. Please try again with a clearer photo.");
+      toast.error(errorMsg);
     } finally {
       setIsUploading(false);
     }
@@ -1367,10 +1463,7 @@ export default function UploadPage() {
       <CameraGuideModal
         isOpen={isCameraGuideOpen}
         onClose={() => setIsCameraGuideOpen(false)}
-        onFileSelect={(f) => {
-          setFile(f);
-          setPreviewUrl(URL.createObjectURL(f));
-        }}
+        onFileSelect={(f) => handleFileSelect(f)}
       />
 
       <ExtractionProgressModal
@@ -1469,16 +1562,63 @@ export default function UploadPage() {
               accept="image/*"
               className="hidden"
               onChange={(e) => {
-                const f = e.target.files[0];
-                if (f) { setFile(f); setPreviewUrl(URL.createObjectURL(f)); }
+                const f = e.target.files?.[0];
+                if (f) handleFileSelect(f);
+                e.target.value = "";
               }}
             />
             {file ? (
-              <div className="flex flex-col items-center gap-2">
-                <CheckCircle2 className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-400" />
-                <p className="text-sm font-semibold text-zinc-100 break-all">{file.name}</p>
-                <p className="text-xs text-zinc-400 font-mono">{(file.size / 1024).toFixed(1)} KB · Ready to scan</p>
-                <span className="text-xs text-emerald-400 mt-1">Tap to change</span>
+              <div className="flex flex-col sm:flex-row items-center gap-4 w-full p-2 text-left">
+                <div className="relative group shrink-0">
+                  <img
+                    src={previewUrl}
+                    alt="Selected Document Preview"
+                    className="w-28 h-28 sm:w-36 sm:h-36 object-contain rounded-xl bg-zinc-900 border border-zinc-700/80 shadow-md"
+                  />
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl flex items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleRotateSelectedFile(90); }}
+                      className="p-1.5 rounded-lg bg-zinc-800 text-white hover:bg-emerald-600 transition-colors shadow"
+                      title="Rotate 90° Clockwise"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex flex-col items-center sm:items-start text-center sm:text-left flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                    <p className="text-sm font-semibold text-zinc-100 truncate max-w-[200px] sm:max-w-xs">{file.name}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                    <span className="text-xs text-emerald-400 font-mono font-medium">
+                      {(file.size / 1024).toFixed(1)} KB (Optimized)
+                    </span>
+                    {originalFileSize && originalFileSize > file.size && (
+                      <span className="text-[11px] text-zinc-500 line-through font-mono">
+                        {(originalFileSize / 1024).toFixed(1)} KB
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleRotateSelectedFile(90); }}
+                      className="btn-secondary text-xs py-1 px-2.5 flex items-center gap-1.5"
+                    >
+                      <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
+                      Rotate 90°
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setFile(null); setPreviewUrl(null); setOriginalFileSize(null); }}
+                      className="text-xs text-zinc-400 hover:text-red-400 py-1 px-2 transition-colors"
+                    >
+                      Change Photo
+                    </button>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="flex flex-col items-center gap-2.5 sm:gap-3">

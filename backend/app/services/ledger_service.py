@@ -38,6 +38,25 @@ def _load_column_mappings(db: Session) -> Dict[str, Product]:
             if name_clean and name_clean not in result:
                 result[name_clean] = p
 
+    # Smart fallback for common fish trade abbreviations
+    for p in all_products:
+        p_name_up = (p.name or "").strip().upper()
+        p_code_up = (p.product_code or "").strip().upper()
+        if ("ROHU" in p_name_up or "RPHU" in p_name_up) and "R" not in result:
+            result["R"] = p
+        if ("TILAPIA" in p_name_up or "TEST" in p_name_up) and "T" not in result:
+            result["T"] = p
+        if ("KATLA" in p_name_up or "CATLA" in p_name_up) and "K" not in result:
+            result["K"] = p
+        if "SILVER" in p_name_up:
+            if "SIL" not in result: result["SIL"] = p
+            if "SI" not in result: result["SI"] = p
+        if "PARDA" in p_name_up or "PANGAS" in p_name_up or "PANGASH" in p_name_up:
+            if "PD" not in result: result["PD"] = p
+        if "PAPAR" in p_name_up or "PAPLATE" in p_name_up:
+            if "PP" not in result: result["PP"] = p
+            if "P" not in result: result["P"] = p
+
     return result
 
 
