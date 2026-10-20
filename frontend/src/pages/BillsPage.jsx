@@ -103,8 +103,12 @@ export default function BillsPage() {
       }
       queryClient.invalidateQueries(["bills"]);
       queryClient.invalidateQueries(["dashboard-stats"]);
-      toast.success("Bill created successfully!");
+      toast.success("Bill created! Printing receipt...");
       setIsManualModalOpen(false);
+      // Auto-print thermal receipt after bill creation
+      if (res?.data) {
+        handleThermalPrint(res.data);
+      }
     },
     onError: (err) => {
       toast.error(err.response?.data?.detail || "Failed to create bill");
