@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Edit2, Trash2, CheckCircle2, XCircle, AlertTriangle, Phone, MapPin } from "lucide-react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import api from "../lib/api";
+import Pagination from "../components/Pagination";
 
 function CustomerModal({ onClose, existing }) {
   const qc = useQueryClient();
@@ -130,16 +131,25 @@ function DeleteConfirmModal({ customer, onConfirm, onCancel, isPending }) {
   );
 }
 
+const CUST_PAGE_SIZE = 10;
+
 export default function CustomersPage() {
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState(null); // null | "add" | customer obj
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [page, setPage] = useState(1);
   const qc = useQueryClient();
 
   const { data = [], isLoading } = useQuery({
     queryKey: ["customers", search],
     queryFn: () => api.get(`/customers?search=${search}`).then((r) => r.data),
   });
+
+  const totalPages = Math.max(1, Math.ceil(data.length / CUST_PAGE_SIZE));
+  const paginatedData = useMemo(() => {
+    const start = (page - 1) * CUST_PAGE_SIZE;
+    return data.slice(start, start + CUST_PAGE_SIZE);
+  }, [data, page]);
 
   const toggleActive = useMutation({
     mutationFn: (c) => api.put(`/customers/${c.id}`, { ...c, is_active: !c.is_active }),
@@ -177,7 +187,7 @@ export default function CustomersPage() {
             className="input-field pl-9 text-xs sm:text-sm"
             placeholder="Search customer by name or phone…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           />
         </div>
         <span className="text-xs text-zinc-400">
@@ -210,7 +220,7 @@ export default function CustomersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.map((c) => (
+                  {paginatedData.map((c) => (
                     <tr key={c.id}>
                       <td className="font-medium text-zinc-100">{c.name}</td>
                       <td className="text-zinc-400 font-mono text-xs">{c.phone || "—"}</td>
@@ -257,7 +267,7 @@ export default function CustomersPage() {
 
             {/* Mobile Card List (< md) */}
             <div className="block md:hidden divide-y divide-zinc-800/80">
-              {data.map((c) => (
+              {paginatedData.map((c) => (
                 <div key={c.id} className="p-4 flex flex-col gap-3">
                   <div className="flex items-center justify-between">
                     <div className="font-semibold text-zinc-100 text-sm">{c.name}</div>
@@ -320,6 +330,14 @@ export default function CustomersPage() {
                 </div>
               ))}
             </div>
+            {/* Pagination */}
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalItems={data.length}
+              pageSize={CUST_PAGE_SIZE}
+              onPageChange={setPage}
+            />
           </>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Download, Calendar, Users, Package,
@@ -8,6 +8,9 @@ import {
 import toast from "react-hot-toast";
 import api from "../lib/api";
 import { formatCurrency, downloadBlob } from "../lib/utils";
+import Pagination from "../components/Pagination";
+
+const PAGE_SIZE = 10;
 
 export default function ReportsPage() {
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -15,6 +18,8 @@ export default function ReportsPage() {
   const [dateTo, setDateTo]     = useState(todayStr);
   const [activeTab, setActiveTab] = useState("customers"); // "customers" | "products"
   const [searchTerm, setSearchTerm] = useState("");
+  const [custPage, setCustPage] = useState(1);
+  const [prodPage, setProdPage] = useState(1);
   const [downloading, setDownloading] = useState(null);
 
   // Quick preset filter buttons
@@ -73,6 +78,18 @@ export default function ReportsPage() {
   const filteredProducts = products.filter((p) =>
     (p.product_name || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const totalCustPages = Math.ceil(filteredCustomers.length / PAGE_SIZE) || 1;
+  const paginatedCustomers = useMemo(() => {
+    const start = (custPage - 1) * PAGE_SIZE;
+    return filteredCustomers.slice(start, start + PAGE_SIZE);
+  }, [filteredCustomers, custPage]);
+
+  const totalProdPages = Math.ceil(filteredProducts.length / PAGE_SIZE) || 1;
+  const paginatedProducts = useMemo(() => {
+    const start = (prodPage - 1) * PAGE_SIZE;
+    return filteredProducts.slice(start, start + PAGE_SIZE);
+  }, [filteredProducts, prodPage]);
 
   const downloadReport = async (type) => {
     setDownloading(type);
@@ -290,7 +307,11 @@ export default function ReportsPage() {
               type="text"
               placeholder={`Search ${activeTab === "customers" ? "customer or phone" : "product"}...`}
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setCustPage(1);
+                setProdPage(1);
+              }}
               className="input-field pl-9 text-xs"
             />
           </div>
@@ -321,9 +342,11 @@ export default function ReportsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredCustomers.map((c, i) => (
+                      {paginatedCustomers.map((c, i) => (
                         <tr key={c.customer_id || i}>
-                          <td className="text-center text-zinc-500 font-mono">{i + 1}</td>
+                          <td className="text-center text-zinc-500 font-mono">
+                            {(custPage - 1) * PAGE_SIZE + i + 1}
+                          </td>
                           <td className="font-semibold text-zinc-200">{c.customer_name}</td>
                           <td className="text-zinc-400 font-mono">{c.phone || "—"}</td>
                           <td className="text-center font-mono text-zinc-300">{c.bills_count}</td>
@@ -380,11 +403,13 @@ export default function ReportsPage() {
 
                 {/* Mobile Cards List (< md) */}
                 <div className="block md:hidden divide-y divide-zinc-800/80">
-                  {filteredCustomers.map((c, i) => (
+                  {paginatedCustomers.map((c, i) => (
                     <div key={c.customer_id || i} className="p-4 flex flex-col gap-2.5">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs text-zinc-500">#{i + 1}</span>
+                          <span className="font-mono text-xs text-zinc-500">
+                            #{(custPage - 1) * PAGE_SIZE + i + 1}
+                          </span>
                           <span className="font-semibold text-zinc-100 text-sm">{c.customer_name}</span>
                         </div>
                         <span
@@ -432,6 +457,14 @@ export default function ReportsPage() {
                     </div>
                   ))}
                 </div>
+
+                <Pagination
+                  page={custPage}
+                  totalPages={totalCustPages}
+                  totalItems={filteredCustomers.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setCustPage}
+                />
               </>
             )}
           </div>
@@ -462,9 +495,11 @@ export default function ReportsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredProducts.map((p, i) => (
+                      {paginatedProducts.map((p, i) => (
                         <tr key={p.product_id || i}>
-                          <td className="text-center text-zinc-500 font-mono">{i + 1}</td>
+                          <td className="text-center text-zinc-500 font-mono">
+                            {(prodPage - 1) * PAGE_SIZE + i + 1}
+                          </td>
                           <td className="font-semibold text-zinc-200">{p.product_name}</td>
                           <td className="text-center text-zinc-400 font-mono">{p.unit}</td>
                           <td className="text-right font-mono text-zinc-200">{p.total_qty}</td>
@@ -506,11 +541,13 @@ export default function ReportsPage() {
 
                 {/* Mobile Cards List (< md) */}
                 <div className="block md:hidden divide-y divide-zinc-800/80">
-                  {filteredProducts.map((p, i) => (
+                  {paginatedProducts.map((p, i) => (
                     <div key={p.product_id || i} className="p-4 flex flex-col gap-2.5">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs text-zinc-500">#{i + 1}</span>
+                          <span className="font-mono text-xs text-zinc-500">
+                            #{(prodPage - 1) * PAGE_SIZE + i + 1}
+                          </span>
                           <span className="font-semibold text-zinc-100 text-sm">{p.product_name}</span>
                         </div>
                         <span className="badge-zinc text-[10px] font-mono">{p.unit}</span>
@@ -548,6 +585,14 @@ export default function ReportsPage() {
                     </div>
                   ))}
                 </div>
+
+                <Pagination
+                  page={prodPage}
+                  totalPages={totalProdPages}
+                  totalItems={filteredProducts.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setProdPage}
+                />
               </>
             )}
           </div>

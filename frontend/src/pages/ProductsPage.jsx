@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Package, Plus, Search, Edit2, Trash2, CheckCircle2, XCircle,
@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../lib/api";
+import Pagination from "../components/Pagination";
 
 function DeleteConfirmModal({ product, onConfirm, onCancel, isPending }) {
   return (
@@ -45,6 +46,8 @@ function DeleteConfirmModal({ product, onConfirm, onCancel, isPending }) {
   );
 }
 
+const PROD_PAGE_SIZE = 10;
+
 export default function ProductsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
@@ -52,6 +55,7 @@ export default function ProductsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [page, setPage] = useState(1);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -200,6 +204,12 @@ export default function ProductsPage() {
     return matchesSearch && matchesFilter;
   });
 
+  const prodTotalPages = Math.max(1, Math.ceil(filteredProducts.length / PROD_PAGE_SIZE));
+  const paginatedProducts = useMemo(() => {
+    const start = (page - 1) * PROD_PAGE_SIZE;
+    return filteredProducts.slice(start, start + PROD_PAGE_SIZE);
+  }, [filteredProducts, page]);
+
   return (
     <div className="flex flex-col gap-6">
       {/* Page Header */}
@@ -225,7 +235,7 @@ export default function ProductsPage() {
             type="text"
             placeholder="Search products or column code..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="input-field pl-9 text-xs sm:text-sm"
           />
         </div>
@@ -234,7 +244,7 @@ export default function ProductsPage() {
           {["all", "active", "inactive"].map((tab) => (
             <button
               key={tab}
-              onClick={() => setFilterActive(tab)}
+              onClick={() => { setFilterActive(tab); setPage(1); }}
               className={`segmented-item capitalize ${filterActive === tab ? "active" : ""}`}
             >
               {tab}
@@ -271,7 +281,7 @@ export default function ProductsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredProducts.map((p) => {
+                  {paginatedProducts.map((p) => {
                     const rInfo = rateMap[p.id];
                     const baseRate = rInfo?.rate;
                     const liveRate = rInfo?.live_rate;
@@ -331,7 +341,7 @@ export default function ProductsPage() {
 
             {/* Mobile Card List (< md) */}
             <div className="block md:hidden divide-y divide-zinc-800/80">
-              {filteredProducts.map((p) => {
+              {paginatedProducts.map((p) => {
                 const rInfo = rateMap[p.id];
                 const baseRate = rInfo?.rate;
                 const liveRate = rInfo?.live_rate;
@@ -392,6 +402,14 @@ export default function ProductsPage() {
                 );
               })}
             </div>
+            {/* Pagination */}
+            <Pagination
+              page={page}
+              totalPages={prodTotalPages}
+              totalItems={filteredProducts.length}
+              pageSize={PROD_PAGE_SIZE}
+              onPageChange={setPage}
+            />
           </>
         )}
       </div>

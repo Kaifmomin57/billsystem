@@ -150,6 +150,7 @@ def _run_schema_migrations():
         indexes = [
             ("idx_bills_customer_id", "CREATE INDEX IF NOT EXISTS idx_bills_customer_id ON bills(customer_id);"),
             ("idx_bills_payment_status", "CREATE INDEX IF NOT EXISTS idx_bills_payment_status ON bills(payment_status);"),
+            ("idx_bills_cust_unpaid", "CREATE INDEX IF NOT EXISTS idx_bills_cust_unpaid ON bills(customer_id, payment_status, balance_due);"),
             ("idx_bills_bill_date", "CREATE INDEX IF NOT EXISTS idx_bills_bill_date ON bills(bill_date);"),
             ("idx_bills_created_at", "CREATE INDEX IF NOT EXISTS idx_bills_created_at ON bills(created_at);"),
             ("idx_bill_items_bill_id", "CREATE INDEX IF NOT EXISTS idx_bill_items_bill_id ON bill_items(bill_id);"),

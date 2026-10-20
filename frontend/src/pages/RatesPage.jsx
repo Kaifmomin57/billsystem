@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   IndianRupee, Users, Package, Plus, Edit2,
@@ -7,12 +7,18 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../lib/api";
+import Pagination from "../components/Pagination";
+
+const PAGE_SIZE = 10;
 
 export default function RatesPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("base"); // base | customer | history
   const [search, setSearch] = useState("");
   const [baseSearch, setBaseSearch] = useState("");
+  const [basePage, setBasePage] = useState(1);
+  const [custPage, setCustPage] = useState(1);
+  const [histPage, setHistPage] = useState(1);
 
   // Rate Tester Collapsible State
   const [showTester, setShowTester] = useState(false);
@@ -169,6 +175,24 @@ export default function RatesPage() {
       r.product_name?.toLowerCase().includes(baseSearch.toLowerCase()) ||
       (r.product_code && r.product_code.toLowerCase().includes(baseSearch.toLowerCase()))
   );
+
+  const totalBasePages = Math.ceil(filteredBaseRates.length / PAGE_SIZE) || 1;
+  const paginatedBaseRates = useMemo(() => {
+    const start = (basePage - 1) * PAGE_SIZE;
+    return filteredBaseRates.slice(start, start + PAGE_SIZE);
+  }, [filteredBaseRates, basePage]);
+
+  const totalCustPages = Math.ceil(filteredRates.length / PAGE_SIZE) || 1;
+  const paginatedCustRates = useMemo(() => {
+    const start = (custPage - 1) * PAGE_SIZE;
+    return filteredRates.slice(start, start + PAGE_SIZE);
+  }, [filteredRates, custPage]);
+
+  const totalHistPages = Math.ceil(history.length / PAGE_SIZE) || 1;
+  const paginatedHistory = useMemo(() => {
+    const start = (histPage - 1) * PAGE_SIZE;
+    return history.slice(start, start + PAGE_SIZE);
+  }, [history, histPage]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -342,7 +366,10 @@ export default function RatesPage() {
                 type="text"
                 placeholder="Search products..."
                 value={baseSearch}
-                onChange={(e) => setBaseSearch(e.target.value)}
+                onChange={(e) => {
+                  setBaseSearch(e.target.value);
+                  setBasePage(1);
+                }}
                 className="input-field pl-9 text-xs sm:text-sm"
               />
             </div>
@@ -375,7 +402,7 @@ export default function RatesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredBaseRates.map((r) => {
+                    {paginatedBaseRates.map((r) => {
                       const hasLive = r.live_rate !== null && r.live_rate !== undefined && r.live_rate > 0;
                       return (
                         <tr key={r.id}>
@@ -423,7 +450,7 @@ export default function RatesPage() {
 
               {/* Mobile Card List (< md) */}
               <div className="block md:hidden p-3 sm:p-4 flex flex-col gap-3.5">
-                {filteredBaseRates.map((r) => {
+                {paginatedBaseRates.map((r) => {
                   const hasLive = r.live_rate !== null && r.live_rate !== undefined && r.live_rate > 0;
                   return (
                     <div key={r.id} className="p-4 flex flex-col gap-3.5 bg-zinc-900/90 border border-zinc-800/90 rounded-xl shadow-sm hover:border-zinc-700/80 transition-all">
@@ -471,6 +498,14 @@ export default function RatesPage() {
                   );
                 })}
               </div>
+
+              <Pagination
+                page={basePage}
+                totalPages={totalBasePages}
+                totalItems={filteredBaseRates.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setBasePage}
+              />
             </>
           )}
         </div>
@@ -486,7 +521,10 @@ export default function RatesPage() {
                 type="text"
                 placeholder="Search customer or product..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setCustPage(1);
+                }}
                 className="input-field pl-9 text-xs sm:text-sm"
               />
             </div>
@@ -523,7 +561,7 @@ export default function RatesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredRates.map((r) => (
+                    {paginatedCustRates.map((r) => (
                       <tr key={r.id}>
                         <td className="font-medium text-zinc-100">{r.customer_name}</td>
                         <td className="text-zinc-300">
@@ -575,7 +613,7 @@ export default function RatesPage() {
 
               {/* Mobile Card List (< md) */}
               <div className="block md:hidden p-3 sm:p-4 flex flex-col gap-3.5">
-                {filteredRates.map((r) => (
+                {paginatedCustRates.map((r) => (
                   <div key={r.id} className="p-4 flex flex-col gap-3.5 bg-zinc-900/90 border border-zinc-800/90 rounded-xl shadow-sm hover:border-zinc-700/80 transition-all">
                     <div className="flex items-center justify-between">
                       <div className="font-semibold text-zinc-100 text-sm">{r.customer_name}</div>
@@ -630,6 +668,14 @@ export default function RatesPage() {
                   </div>
                 ))}
               </div>
+
+              <Pagination
+                page={custPage}
+                totalPages={totalCustPages}
+                totalItems={filteredRates.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setCustPage}
+              />
             </>
           )}
         </div>
@@ -659,7 +705,7 @@ export default function RatesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {history.map((h) => (
+                    {paginatedHistory.map((h) => (
                       <tr key={h.id}>
                         <td>
                           <span className="badge-zinc uppercase text-[10px]">
@@ -688,7 +734,7 @@ export default function RatesPage() {
 
               {/* Mobile Card List (< md) */}
               <div className="block md:hidden p-3 sm:p-4 flex flex-col gap-3.5">
-                {history.map((h) => (
+                {paginatedHistory.map((h) => (
                   <div key={h.id} className="p-4 flex flex-col gap-3 text-xs bg-zinc-900/90 border border-zinc-800/90 rounded-xl shadow-sm hover:border-zinc-700/80 transition-all">
                     <div className="flex items-center justify-between">
                       <span className="badge-zinc uppercase text-[10px]">
@@ -725,6 +771,14 @@ export default function RatesPage() {
                   </div>
                 ))}
               </div>
+
+              <Pagination
+                page={histPage}
+                totalPages={totalHistPages}
+                totalItems={history.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setHistPage}
+              />
             </>
           )}
         </div>

@@ -1,3 +1,4 @@
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -7,6 +8,9 @@ import {
 } from "lucide-react";
 import api from "../lib/api";
 import { formatCurrency, formatDate } from "../lib/utils";
+import Pagination from "../components/Pagination";
+
+const BILLS_PAGE_SIZE = 5;
 
 function StatCard({ label, value, subtext, icon: Icon, badgeColor }) {
   return (
@@ -59,6 +63,13 @@ export default function Dashboard() {
 
   const topDebtors = stats?.top_debtors || [];
   const recentBills = stats?.recent_bills || [];
+
+  const [billPage, setBillPage] = useState(1);
+  const totalBillPages = Math.ceil(recentBills.length / BILLS_PAGE_SIZE) || 1;
+  const paginatedBills = useMemo(() => {
+    const s = (billPage - 1) * BILLS_PAGE_SIZE;
+    return recentBills.slice(s, s + BILLS_PAGE_SIZE);
+  }, [recentBills, billPage]);
 
   const paidPercentage = totalBills > 0 ? Math.round((paidCount / totalBills) * 100) : 0;
 
@@ -309,7 +320,7 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {recentBills.map((bill) => {
+                  {paginatedBills.map((bill) => {
                     const isPaid = bill.payment_status === "paid";
                     const isPartial = bill.payment_status === "partial";
                     return (
@@ -353,7 +364,7 @@ export default function Dashboard() {
 
             {/* Mobile Card List (< md) */}
             <div className="block md:hidden divide-y divide-zinc-800/80">
-              {recentBills.map((bill) => {
+              {paginatedBills.map((bill) => {
                 const isPaid = bill.payment_status === "paid";
                 const isPartial = bill.payment_status === "partial";
 
@@ -410,6 +421,14 @@ export default function Dashboard() {
                 );
               })}
             </div>
+
+            <Pagination
+              page={billPage}
+              totalPages={totalBillPages}
+              totalItems={recentBills.length}
+              pageSize={BILLS_PAGE_SIZE}
+              onPageChange={setBillPage}
+            />
           </>
         )}
       </div>
