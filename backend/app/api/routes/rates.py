@@ -345,6 +345,8 @@ def get_effective_rate(
 def get_rate_history(
     product_id: Optional[int] = None,
     customer_id: Optional[int] = None,
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -361,8 +363,16 @@ def get_rate_history(
         query = query.filter(RateHistory.product_id == product_id)
     if customer_id:
         query = query.filter(RateHistory.customer_id == customer_id)
-    rows = query.order_by(RateHistory.changed_at.desc()).limit(100).all()
-    
+
+    total = query.count()
+
+    if page is not None:
+        ps = page_size or 10
+        off = (page - 1) * ps
+        rows = query.order_by(RateHistory.changed_at.desc()).offset(off).limit(ps).all()
+    else:
+        rows = query.order_by(RateHistory.changed_at.desc()).limit(100).all()
+
     results = []
     for h, p_name, c_name in rows:
         results.append({
@@ -377,6 +387,17 @@ def get_rate_history(
             "changed_by": h.changed_by,
             "changed_at": h.changed_at.isoformat()
         })
+
+    if page is not None:
+        ps = page_size or 10
+        total_pages = max(1, (total + ps - 1) // ps)
+        return {
+            "items": results,
+            "total": total,
+            "page": page,
+            "page_size": ps,
+            "total_pages": total_pages
+        }
     return results
 
 

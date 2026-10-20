@@ -57,10 +57,15 @@ export default function RatesPage() {
     queryFn: () => api.get("/rates/customers").then((r) => r.data),
   });
 
-  const { data: history = [] } = useQuery({
-    queryKey: ["rates", "history"],
-    queryFn: () => api.get("/rates/history").then((r) => r.data),
+  const { data: histData = {}, isLoading: loadingHist } = useQuery({
+    queryKey: ["rates", "history", histPage],
+    queryFn: () => api.get(`/rates/history?page=${histPage}&page_size=${PAGE_SIZE}`).then((r) => r.data),
+    placeholderData: (prev) => prev,
   });
+
+  const paginatedHistory = histData?.items || (Array.isArray(histData) ? histData : []);
+  const totalHistItems = histData?.total ?? paginatedHistory.length;
+  const totalHistPages = histData?.total_pages ?? Math.max(1, Math.ceil(totalHistItems / PAGE_SIZE));
 
   // Save base product live rate
   const saveProductLiveRateMutation = useMutation({
@@ -187,12 +192,6 @@ export default function RatesPage() {
     const start = (custPage - 1) * PAGE_SIZE;
     return filteredRates.slice(start, start + PAGE_SIZE);
   }, [filteredRates, custPage]);
-
-  const totalHistPages = Math.ceil(history.length / PAGE_SIZE) || 1;
-  const paginatedHistory = useMemo(() => {
-    const start = (histPage - 1) * PAGE_SIZE;
-    return history.slice(start, start + PAGE_SIZE);
-  }, [history, histPage]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -687,7 +686,11 @@ export default function RatesPage() {
           <div className="p-4 border-b border-zinc-800">
             <h3 className="text-sm font-semibold text-zinc-200">Rate Change Audit Log</h3>
           </div>
-          {history.length === 0 ? (
+          {loadingHist ? (
+            <div className="p-12 flex justify-center">
+              <div className="w-6 h-6 rounded-full border-2 border-zinc-700 border-t-emerald-500 animate-spin" />
+            </div>
+          ) : paginatedHistory.length === 0 ? (
             <div className="p-12 text-center text-sm text-zinc-500">No rate changes recorded yet.</div>
           ) : (
             <>
@@ -775,7 +778,7 @@ export default function RatesPage() {
               <Pagination
                 page={histPage}
                 totalPages={totalHistPages}
-                totalItems={history.length}
+                totalItems={totalHistItems}
                 pageSize={PAGE_SIZE}
                 onPageChange={setHistPage}
               />

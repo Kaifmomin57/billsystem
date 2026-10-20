@@ -1,12 +1,16 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import uuid
 import urllib.parse
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, func
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.models import Bill, BillItem, Customer, Product, User, PaymentInstallment
-from app.schemas.schemas import BillCreate, BillUpdate, BillOut, BillItemOut, BillPaymentUpdate, PaymentInstallmentOut, BulkWhatsAppRequest
+from app.schemas.schemas import (
+    BillCreate, BillUpdate, BillOut, BillItemOut, BillPaymentUpdate,
+    PaymentInstallmentOut, BulkWhatsAppRequest, PaginatedBillsOut
+)
 from app.services.pdf_service import generate_bill_pdf
 from app.services.whatsapp_service import send_whatsapp_direct, clean_phone_number, check_openwa_status
 from app.services.cloudinary_service import upload_image_to_cloudinary
@@ -132,29 +136,113 @@ def _format_bills_batch(bills, db: Session):
 
     return [_format_single_bill(b, unpaid_by_customer.get(b.customer_id, [])) for b in bills]
 
-@router.get("", response_model=List[BillOut])
+@router.get("", response_model=Union[PaginatedBillsOut, List[BillOut]])
 def list_bills(
-    customer_id: Optional[int] = None, start_date: Optional[str] = None,
-    end_date: Optional[str] = None, source: Optional[str] = None,
-    limit: int = 100, offset: int = 0, db: Session = Depends(get_db),
+    customer_id: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    source: Optional[str] = None,
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=100),
+    limit: Optional[int] = 100,
+    offset: Optional[int] = 0,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     query = (
         db.query(Bill)
         .join(Customer, Customer.id == Bill.customer_id)
+    )
+    if customer_id:
+        query = query.filter(Bill.customer_id == customer_id)
+    if start_date:
+        query = query.filter(Bill.bill_date >= start_date)
+    if end_date:
+        query = query.filter(Bill.bill_date <= end_date)
+    if source and source.strip() and source.lower() != "all":
+        query = query.filter(Bill.source == source.strip())
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                Bill.bill_no.ilike(term),
+                Customer.name.ilike(term),
+                Customer.phone.ilike(term),
+            )
+        )
+    if status and status.strip() and status.lower() != "all":
+        st = status.strip().lower()
+        if st == "paid":
+            query = query.filter(Bill.payment_status == "paid")
+        elif st == "due":
+            query = query.filter(Bill.payment_status.in_(["unpaid", "partial"]), Bill.balance_due > 0)
+        elif st == "partial":
+            query = query.filter(Bill.payment_status == "partial")
+        elif st == "unpaid":
+            query = query.filter(Bill.payment_status == "unpaid")
+
+    total = query.count()
+
+    # Scope query for status breakdown badge counts
+    scope_query = db.query(Bill.payment_status, func.count(Bill.id)).join(Customer, Customer.id == Bill.customer_id)
+    if customer_id:
+        scope_query = scope_query.filter(Bill.customer_id == customer_id)
+    if start_date:
+        scope_query = scope_query.filter(Bill.bill_date >= start_date)
+    if end_date:
+        scope_query = scope_query.filter(Bill.bill_date <= end_date)
+    if source and source.strip() and source.lower() != "all":
+        scope_query = scope_query.filter(Bill.source == source.strip())
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        scope_query = scope_query.filter(
+            or_(
+                Bill.bill_no.ilike(term),
+                Customer.name.ilike(term),
+                Customer.phone.ilike(term),
+            )
+        )
+    counts_by_status = dict(scope_query.group_by(Bill.payment_status).all())
+    paid_cnt = counts_by_status.get("paid", 0)
+    due_cnt = counts_by_status.get("unpaid", 0) + counts_by_status.get("partial", 0)
+
+    if page is not None:
+        ps = page_size or 20
+        off = (page - 1) * ps
+        lim = ps
+    else:
+        off = offset or 0
+        lim = limit or 100
+
+    bills = (
+        query
         .options(
             joinedload(Bill.customer),
             selectinload(Bill.items).joinedload(BillItem.product),
             selectinload(Bill.payment_installments),
         )
+        .order_by(Bill.bill_date.desc(), Bill.id.desc())
+        .offset(off)
+        .limit(lim)
+        .all()
     )
-    if customer_id: query = query.filter(Bill.customer_id == customer_id)
-    if start_date: query = query.filter(Bill.bill_date >= start_date)
-    if end_date: query = query.filter(Bill.bill_date <= end_date)
-    if source and source.strip() and source.lower() != "all":
-        query = query.filter(Bill.source == source.strip())
-    bills = query.order_by(Bill.bill_date.desc(), Bill.id.desc()).offset(offset).limit(limit).all()
-    return _format_bills_batch(bills, db)
+    formatted = _format_bills_batch(bills, db)
+
+    if page is not None:
+        ps = page_size or 20
+        total_pages = max(1, (total + ps - 1) // ps)
+        return PaginatedBillsOut(
+            items=formatted,
+            total=total,
+            page=page,
+            page_size=ps,
+            total_pages=total_pages,
+            paid_count=paid_cnt,
+            due_count=due_cnt,
+        )
+    return formatted
 
 @router.post("", response_model=BillOut)
 def create_manual_bill(data: BillCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

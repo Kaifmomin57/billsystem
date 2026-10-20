@@ -140,26 +140,27 @@ export default function CustomersPage() {
   const [page, setPage] = useState(1);
   const qc = useQueryClient();
 
-  const { data = [], isLoading } = useQuery({
-    queryKey: ["customers", search],
-    queryFn: () => api.get(`/customers?search=${search}`).then((r) => r.data),
+  const { data: custData, isLoading } = useQuery({
+    queryKey: ["customers-chunked", search, page],
+    queryFn: () =>
+      api.get(`/customers?search=${encodeURIComponent(search)}&page=${page}&page_size=${CUST_PAGE_SIZE}`).then((r) => r.data),
+    placeholderData: (prev) => prev,
   });
 
-  const totalPages = Math.max(1, Math.ceil(data.length / CUST_PAGE_SIZE));
-  const paginatedData = useMemo(() => {
-    const start = (page - 1) * CUST_PAGE_SIZE;
-    return data.slice(start, start + CUST_PAGE_SIZE);
-  }, [data, page]);
+  const customersList = custData?.items || (Array.isArray(custData) ? custData : []);
+  const totalCustomers = custData?.total ?? customersList.length;
+  const totalPages = custData?.total_pages ?? Math.max(1, Math.ceil(totalCustomers / CUST_PAGE_SIZE));
 
   const toggleActive = useMutation({
     mutationFn: (c) => api.put(`/customers/${c.id}`, { ...c, is_active: !c.is_active }),
-    onSuccess: () => { qc.invalidateQueries(["customers"]); toast.success("Status updated"); },
+    onSuccess: () => { qc.invalidateQueries(["customers"]); qc.invalidateQueries(["customers-chunked"]); toast.success("Status updated"); },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id) => api.delete(`/customers/${id}`),
     onSuccess: () => {
       qc.invalidateQueries(["customers"]);
+      qc.invalidateQueries(["customers-chunked"]);
       toast.success("Customer removed");
       setDeleteTarget(null);
     },
@@ -191,7 +192,7 @@ export default function CustomersPage() {
           />
         </div>
         <span className="text-xs text-zinc-400">
-          {data.length} registered customers
+          {totalCustomers} registered customers
         </span>
       </div>
 
@@ -201,7 +202,7 @@ export default function CustomersPage() {
           <div className="p-12 flex justify-center">
             <div className="w-6 h-6 rounded-full border-2 border-zinc-700 border-t-emerald-500 animate-spin" />
           </div>
-        ) : data.length === 0 ? (
+        ) : customersList.length === 0 ? (
           <div className="p-12 text-center py-10 text-zinc-500 text-sm">
             No customers found matching your search.
           </div>
@@ -220,7 +221,7 @@ export default function CustomersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedData.map((c) => (
+                  {customersList.map((c) => (
                     <tr key={c.id}>
                       <td className="font-medium text-zinc-100">{c.name}</td>
                       <td className="text-zinc-400 font-mono text-xs">{c.phone || "—"}</td>
@@ -267,7 +268,7 @@ export default function CustomersPage() {
 
             {/* Mobile Card List (< md) */}
             <div className="block md:hidden divide-y divide-zinc-800/80">
-              {paginatedData.map((c) => (
+              {customersList.map((c) => (
                 <div key={c.id} className="p-4 flex flex-col gap-3">
                   <div className="flex items-center justify-between">
                     <div className="font-semibold text-zinc-100 text-sm">{c.name}</div>
@@ -334,7 +335,7 @@ export default function CustomersPage() {
             <Pagination
               page={page}
               totalPages={totalPages}
-              totalItems={data.length}
+              totalItems={totalCustomers}
               pageSize={CUST_PAGE_SIZE}
               onPageChange={setPage}
             />

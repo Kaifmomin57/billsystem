@@ -9,6 +9,9 @@ import toast from "react-hot-toast";
 import api from "../lib/api";
 import { formatCurrency, formatDate } from "../lib/utils";
 import { printerService } from "../printer/printerService";
+import Pagination from "../components/Pagination";
+
+const PAGE_SIZE = 20;
 
 export default function BillsPage() {
   const queryClient = useQueryClient();
@@ -20,6 +23,7 @@ export default function BillsPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [page, setPage] = useState(1);
 
   // Modals
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -68,19 +72,30 @@ export default function BillsPage() {
     staleTime: 5 * 60_000,  // products rarely change — 5min cache
   });
 
-  // Fetch Bills with filters (cached for 60s)
-  const { data: bills = [], isLoading } = useQuery({
-    queryKey: ["bills", selectedCustomerId, selectedSource, startDate, endDate],
+  // Fetch Bills in chunks from backend with server-side pagination & filtering
+  const { data: billsData, isLoading } = useQuery({
+    queryKey: ["bills", page, selectedCustomerId, selectedSource, selectedStatus, startDate, endDate, search],
     queryFn: async () => {
-      let url = "/bills?";
-      if (selectedCustomerId) url += `customer_id=${selectedCustomerId}&`;
-      if (selectedSource) url += `source=${selectedSource}&`;
-      if (startDate) url += `start_date=${startDate}&`;
-      if (endDate) url += `end_date=${endDate}&`;
-      return (await api.get(url)).data;
+      const params = new URLSearchParams();
+      params.append("page", page);
+      params.append("page_size", PAGE_SIZE);
+      if (selectedCustomerId) params.append("customer_id", selectedCustomerId);
+      if (selectedSource) params.append("source", selectedSource);
+      if (selectedStatus) params.append("status", selectedStatus);
+      if (startDate) params.append("start_date", startDate);
+      if (endDate) params.append("end_date", endDate);
+      if (search) params.append("search", search);
+      return (await api.get(`/bills?${params.toString()}`)).data;
     },
-    staleTime: 60_000,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
   });
+
+  const paginatedBills = billsData?.items || (Array.isArray(billsData) ? billsData : []);
+  const totalBills = billsData?.total ?? paginatedBills.length;
+  const totalPages = billsData?.total_pages ?? Math.max(1, Math.ceil(totalBills / PAGE_SIZE));
+  const paidCount = billsData?.paid_count ?? 0;
+  const dueCount = billsData?.due_count ?? 0;
 
   // Delete Mutation
   const deleteMutation = useMutation({
@@ -375,43 +390,6 @@ export default function BillsPage() {
     });
   };
 
-  // Status counts for pills (memoized)
-  const paidCount = useMemo(() => bills.filter((b) => b.payment_status === "paid").length, [bills]);
-  const dueCount = useMemo(
-    () => bills.filter((b) => b.payment_status === "unpaid" || b.payment_status === "partial").length,
-    [bills]
-  );
-
-  const filteredBills = useMemo(() => {
-    return bills.filter((b) => {
-      if (selectedStatus === "paid" && b.payment_status !== "paid") return false;
-      if (selectedStatus === "due" && b.payment_status === "paid") return false;
-      if (selectedStatus === "partial" && b.payment_status !== "partial") return false;
-      if (selectedStatus === "unpaid" && b.payment_status !== "unpaid") return false;
-
-      const q = search.toLowerCase();
-      return (
-        !q ||
-        b.customer_name?.toLowerCase().includes(q) ||
-        b.bill_no?.toLowerCase().includes(q)
-      );
-    });
-  }, [bills, selectedStatus, search]);
-
-  // Client-side pagination (drastically improves initial rendering speed)
-  const PAGE_SIZE = 20;
-  const [page, setPage] = useState(1);
-
-  useEffect(() => {
-    setPage(1);
-  }, [search, selectedStatus, selectedCustomerId, selectedSource, startDate, endDate]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredBills.length / PAGE_SIZE));
-  const paginatedBills = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return filteredBills.slice(start, start + PAGE_SIZE);
-  }, [filteredBills, page]);
-
   const openPaymentModal = (bill) => {
     setPaymentBill(bill);
     setPaymentForm({
@@ -432,7 +410,7 @@ export default function BillsPage() {
             Bills & Invoices
           </h1>
           <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
-            {bills.length} total bills · {dueCount} pending balance payment
+            {totalBills} total bills · {dueCount} pending balance payment
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -459,19 +437,19 @@ export default function BillsPage() {
           {/* Segmented Quick Status Switcher */}
           <div className="segmented-nav">
             <button
-              onClick={() => setSelectedStatus("")}
+              onClick={() => { setSelectedStatus(""); setPage(1); }}
               className={`segmented-item ${selectedStatus === "" ? "active" : ""}`}
             >
-              All Bills ({bills.length})
+              All Bills {totalBills > 0 ? `(${totalBills})` : ""}
             </button>
             <button
-              onClick={() => setSelectedStatus("due")}
+              onClick={() => { setSelectedStatus("due"); setPage(1); }}
               className={`segmented-item ${selectedStatus === "due" ? "active" : ""}`}
             >
               Pending Due ({dueCount})
             </button>
             <button
-              onClick={() => setSelectedStatus("paid")}
+              onClick={() => { setSelectedStatus("paid"); setPage(1); }}
               className={`segmented-item ${selectedStatus === "paid" ? "active" : ""}`}
             >
               Paid in Full ({paidCount})
@@ -486,7 +464,10 @@ export default function BillsPage() {
                 type="text"
                 placeholder="Search customer or bill #..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
                 className="input-field pl-9 text-xs sm:text-sm"
               />
             </div>
@@ -510,7 +491,7 @@ export default function BillsPage() {
               <label className="label">Customer</label>
               <select
                 value={selectedCustomerId}
-                onChange={(e) => setSelectedCustomerId(e.target.value)}
+                onChange={(e) => { setSelectedCustomerId(e.target.value); setPage(1); }}
                 className="input-field text-xs"
               >
                 <option value="">All Customers</option>
@@ -523,7 +504,7 @@ export default function BillsPage() {
               <label className="label">Creation Source</label>
               <select
                 value={selectedSource}
-                onChange={(e) => setSelectedSource(e.target.value)}
+                onChange={(e) => { setSelectedSource(e.target.value); setPage(1); }}
                 className="input-field text-xs"
               >
                 <option value="">All Sources</option>
@@ -537,7 +518,7 @@ export default function BillsPage() {
               <input
                 type="date"
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
                 className="input-field text-xs"
               />
             </div>
@@ -546,7 +527,7 @@ export default function BillsPage() {
               <input
                 type="date"
                 value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
                 className="input-field text-xs"
               />
             </div>
@@ -558,6 +539,7 @@ export default function BillsPage() {
                     setSelectedSource("");
                     setStartDate("");
                     setEndDate("");
+                    setPage(1);
                   }}
                   className="text-xs text-rose-400 hover:text-rose-300 font-medium"
                 >
@@ -574,7 +556,7 @@ export default function BillsPage() {
         <div className="card p-16 flex items-center justify-center">
           <div className="w-7 h-7 rounded-full border-2 border-zinc-700 border-t-emerald-500 animate-spin" />
         </div>
-      ) : filteredBills.length === 0 ? (
+      ) : paginatedBills.length === 0 ? (
         <div className="card p-16 text-center text-zinc-500 text-sm">
           <FileText className="w-10 h-10 mx-auto mb-2 opacity-30 text-zinc-600" />
           No customer bills found matching your filter criteria.
@@ -885,35 +867,15 @@ export default function BillsPage() {
             })}
           </div>
 
-          {/* Pagination Controls */}
-          {filteredBills.length > PAGE_SIZE && (
-            <div className="card p-3 sm:p-4 flex items-center justify-between text-xs text-zinc-400">
-              <div>
-                Showing <span className="font-semibold text-zinc-200">{(page - 1) * PAGE_SIZE + 1}</span> to{" "}
-                <span className="font-semibold text-zinc-200">{Math.min(page * PAGE_SIZE, filteredBills.length)}</span> of{" "}
-                <span className="font-semibold text-zinc-200">{filteredBills.length}</span> bills
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="btn-secondary btn-sm px-3 disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  Previous
-                </button>
-                <span className="font-mono text-zinc-300 px-2 font-medium">
-                  {page} / {totalPages}
-                </span>
-                <button
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                  className="btn-secondary btn-sm px-3 disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          )}
+          {/* Server-Side Chunked Pagination */}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={totalBills}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+            className="mt-4"
+          />
         </>
       )}
 

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Union
 from datetime import datetime
 from decimal import Decimal
 
@@ -206,6 +206,15 @@ class BillOut(BaseModel):
     previous_bills: List[Dict[str, Any]] = []
     class Config:
         from_attributes = True
+
+class PaginatedBillsOut(BaseModel):
+    items: List[BillOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    paid_count: int = 0
+    due_count: int = 0
 
 
 # Upload & Draft schemas

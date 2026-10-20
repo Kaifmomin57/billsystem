@@ -25,8 +25,10 @@ class CustomerIn(BaseModel):
 def list_customers(
     search: str = Query(""),
     is_active: Optional[bool] = None,
-    limit: int = Query(200, le=1000),
-    offset: int = Query(0, ge=0),
+    limit: Optional[int] = Query(None, le=1000),
+    offset: Optional[int] = Query(None, ge=0),
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=100),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -35,7 +37,28 @@ def list_customers(
         q = q.filter(Customer.name.ilike(f"%{search}%"))
     if is_active is not None:
         q = q.filter(Customer.is_active == is_active)
-    items = q.order_by(Customer.name).offset(offset).limit(limit).all()
+
+    total = q.count()
+
+    if page is not None:
+        ps = page_size or 10
+        off = (page - 1) * ps
+        items = q.order_by(Customer.name).offset(off).limit(ps).all()
+        total_pages = max(1, (total + ps - 1) // ps)
+        return {
+            "items": [
+                {"id": c.id, "name": c.name, "phone": c.phone, "address": c.address, "notes": c.notes, "is_active": c.is_active}
+                for c in items
+            ],
+            "total": total,
+            "page": page,
+            "page_size": ps,
+            "total_pages": total_pages,
+        }
+
+    lim = limit or 200
+    off = offset or 0
+    items = q.order_by(Customer.name).offset(off).limit(lim).all()
     return [
         {"id": c.id, "name": c.name, "phone": c.phone, "address": c.address, "notes": c.notes, "is_active": c.is_active}
         for c in items
