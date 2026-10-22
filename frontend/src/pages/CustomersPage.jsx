@@ -471,24 +471,3 @@ export default function CustomersPage() {
     </div>
   );
 }
-
-      {/* Edit / Add Modal */}
-      {modal && (
-        <CustomerModal
-          onClose={() => setModal(null)}
-          existing={modal === "add" ? null : modal}
-        />
-      )}
-
-      {/* Delete Confirm Modal */}
-      {deleteTarget && (
-        <DeleteConfirmModal
-          customer={deleteTarget}
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
-          isPending={deleteMutation.isPending}
-        />
-      )}
-    </div>
-  );
-}
