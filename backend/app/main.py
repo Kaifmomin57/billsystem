@@ -126,6 +126,15 @@ def _run_schema_migrations():
             "sqlite_add": "ALTER TABLE bill_items ADD COLUMN is_live BOOLEAN DEFAULT 0;",
             "description": "Add is_live to bill_items table",
         },
+        {
+            "pg": "ALTER TABLE customers ADD COLUMN IF NOT EXISTS opening_balance NUMERIC(12, 2) DEFAULT 0;",
+            "sqlite_check": (
+                "SELECT COUNT(*) FROM pragma_table_info('customers') "
+                "WHERE name='opening_balance';"
+            ),
+            "sqlite_add": "ALTER TABLE customers ADD COLUMN opening_balance NUMERIC(12, 2) DEFAULT 0;",
+            "description": "Add opening_balance to customers table",
+        },
     ]
 
     is_sqlite = "sqlite" in str(engine.url)

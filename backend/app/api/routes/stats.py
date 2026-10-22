@@ -48,7 +48,8 @@ def get_dashboard_stats(
     total_bills   = int(stats_row.total_bills or 0)
     total_sales   = float(stats_row.total_sales or 0.0)
     received_pay  = float(stats_row.received_pay or 0.0)
-    balance_pay   = float(stats_row.balance_pay or 0.0)
+    total_opening_bal = float(db.query(func.coalesce(func.sum(Customer.opening_balance), 0)).filter(Customer.is_active == True).scalar() or 0.0)
+    balance_pay   = float(stats_row.balance_pay or 0.0) + total_opening_bal
     today_sales   = float(stats_row.today_sales or 0.0)
     today_received= float(stats_row.today_received or 0.0)
     today_bills   = int(stats_row.today_bills or 0)
@@ -59,31 +60,37 @@ def get_dashboard_stats(
     upi_total     = float(stats_row.upi_total or 0.0)
     mixed_total   = float(stats_row.mixed_total or 0.0)
     
-    # Top debtors (customers with pending balance)
-    top_debtors_raw = (
-        db.query(
-            Customer.id,
-            Customer.name,
-            func.sum(Bill.balance_due).label("total_due"),
-            func.count(Bill.id).label("unpaid_bills")
-        )
-        .join(Bill, Bill.customer_id == Customer.id)
+    # Top debtors (customers with pending balance from bills + opening balance)
+    bills_due_query = (
+        db.query(Bill.customer_id, func.sum(Bill.balance_due), func.count(Bill.id))
         .filter(Bill.balance_due > 0)
-        .group_by(Customer.id, Customer.name)
-        .order_by(func.sum(Bill.balance_due).desc())
-        .limit(5)
+        .group_by(Bill.customer_id)
         .all()
     )
-    
-    top_debtors = [
-        {
-            "customer_id": d.id,
-            "customer_name": d.name,
-            "total_due": float(d.total_due or 0),
-            "unpaid_bills": d.unpaid_bills
-        }
-        for d in top_debtors_raw
-    ]
+    bills_due_map = {row[0]: (float(row[1] or 0), int(row[2] or 0)) for row in bills_due_query}
+
+    active_customers = (
+        db.query(Customer)
+        .filter(Customer.is_active == True)
+        .all()
+    )
+
+    debtor_list = []
+    for c in active_customers:
+        b_due, unpaid_cnt = bills_due_map.get(c.id, (0.0, 0))
+        op_due = float(c.opening_balance or 0.0)
+        tot_due = b_due + op_due
+        if tot_due > 0:
+            debtor_list.append({
+                "customer_id": c.id,
+                "customer_name": c.name,
+                "total_due": round(tot_due, 2),
+                "unpaid_bills": unpaid_cnt,
+                "opening_balance": op_due,
+            })
+
+    debtor_list.sort(key=lambda x: x["total_due"], reverse=True)
+    top_debtors = debtor_list[:5]
 
     # Recent bills — eager load Customer in 1 query
     recent_bills = (

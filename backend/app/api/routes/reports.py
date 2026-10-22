@@ -89,14 +89,17 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
         c = bill.customer
         cid = c.id
         if cid not in cust_map:
+            op_bal = float(getattr(c, "opening_balance", 0) or 0)
             cust_map[cid] = {
                 "customer_id": cid,
                 "customer_name": c.name,
                 "phone": c.phone or "",
+                "opening_balance": op_bal,
                 "bills_count": 0,
                 "total_sale": 0.0,
                 "amount_paid": 0.0,
                 "balance_due": 0.0,
+                "total_balance": op_bal,
             }
 
         b_total = float(bill.total_amount or 0)
@@ -107,6 +110,7 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
         cust_map[cid]["total_sale"] += b_total
         cust_map[cid]["amount_paid"] += b_paid
         cust_map[cid]["balance_due"] += b_due
+        cust_map[cid]["total_balance"] = cust_map[cid]["balance_due"] + cust_map[cid]["opening_balance"]
 
         items = bill.items
         if items:

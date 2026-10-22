@@ -1211,9 +1211,31 @@ export default function BillsPage() {
                     >
                       <option value="">Select Customer...</option>
                       {customers.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id}>
+                          {c.name} {c.total_balance > 0 ? `(Due: ₹${c.total_balance})` : ""}
+                        </option>
                       ))}
                     </select>
+                    {billMeta.customer_id && (() => {
+                      const selCust = customers.find((c) => String(c.id) === String(billMeta.customer_id));
+                      if (!selCust) return null;
+                      const totBal = parseFloat(selCust.total_balance || 0);
+                      const openBal = parseFloat(selCust.opening_balance || 0);
+                      return totBal > 0 ? (
+                        <p className="text-xs text-amber-400 mt-1 font-mono font-medium flex items-center gap-1.5">
+                          <span>⚠️ Previous Balance Due: {formatCurrency(totBal)}</span>
+                          {openBal > 0 && selCust.bills_balance > 0 && (
+                            <span className="text-zinc-500 font-normal">
+                              (Prior Unbilled: {formatCurrency(openBal)})
+                            </span>
+                          )}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
+                          <span>✓ No previous pending balance</span>
+                        </p>
+                      );
+                    })()}
                   </div>
                   <div>
                     <label className="label">Bill Date *</label>
@@ -1384,7 +1406,9 @@ export default function BillsPage() {
                     >
                       <option value="">Select Customer...</option>
                       {customers.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id}>
+                          {c.name} {c.total_balance > 0 ? `(Due: ₹${c.total_balance})` : ""}
+                        </option>
                       ))}
                     </select>
                   </div>

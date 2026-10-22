@@ -80,7 +80,8 @@ def _format_single_bill(bill, all_customer_unpaid=None):
     else:
         prev_bills_list = []
 
-    prev_balance = sum(float(pb.balance_due or 0) for pb in prev_bills_list)
+    cust_opening = float(getattr(cust, 'opening_balance', 0) or 0) if cust else 0.0
+    prev_balance = cust_opening + sum(float(pb.balance_due or 0) for pb in prev_bills_list)
     total_due_cf = bal + prev_balance
     prev_bills_out = [
         {

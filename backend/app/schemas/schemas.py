@@ -32,6 +32,7 @@ class CustomerBase(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     notes: Optional[str] = None
+    opening_balance: Optional[float] = 0.0
     is_active: bool = True
 
 class CustomerCreate(CustomerBase):
@@ -42,10 +43,13 @@ class CustomerUpdate(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     notes: Optional[str] = None
+    opening_balance: Optional[float] = None
     is_active: Optional[bool] = None
 
 class CustomerOut(CustomerBase):
     id: int
+    bills_balance: Optional[float] = 0.0
+    total_balance: Optional[float] = 0.0
     created_at: datetime
     class Config:
         from_attributes = True

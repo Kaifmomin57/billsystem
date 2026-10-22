@@ -16,15 +16,16 @@ class User(Base):
 
 class Customer(Base):
     __tablename__ = "customers"
-    id         = Column(Integer, primary_key=True, index=True)
-    name       = Column(String(255), unique=True, nullable=False, index=True)
-    phone      = Column(String(50))
-    address    = Column(Text)
-    notes      = Column(Text)
-    is_active  = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    bills      = relationship("Bill", back_populates="customer")
-    aliases    = relationship("CustomerAlias", back_populates="customer")
+    id              = Column(Integer, primary_key=True, index=True)
+    name            = Column(String(255), unique=True, nullable=False, index=True)
+    phone           = Column(String(50))
+    address         = Column(Text)
+    notes           = Column(Text)
+    opening_balance = Column(Numeric(12, 2), default=0.0)  # Previous pending balance without bill
+    is_active       = Column(Boolean, default=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    bills           = relationship("Bill", back_populates="customer")
+    aliases         = relationship("CustomerAlias", back_populates="customer")
 
 
 class Product(Base):

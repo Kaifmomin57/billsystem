@@ -1,6 +1,7 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -18,7 +19,24 @@ class CustomerIn(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     notes: Optional[str] = None
+    opening_balance: Optional[float] = 0.0
     is_active: bool = True
+
+
+def _format_customer(c: Customer, bill_dues: dict) -> dict:
+    op = float(c.opening_balance or 0.0)
+    bd = float(bill_dues.get(c.id, 0.0))
+    return {
+        "id": c.id,
+        "name": c.name,
+        "phone": c.phone,
+        "address": c.address,
+        "notes": c.notes,
+        "opening_balance": op,
+        "bills_balance": bd,
+        "total_balance": round(op + bd, 2),
+        "is_active": c.is_active,
+    }
 
 
 @router.get("")
@@ -45,11 +63,20 @@ def list_customers(
         off = (page - 1) * ps
         items = q.order_by(Customer.name).offset(off).limit(ps).all()
         total_pages = max(1, (total + ps - 1) // ps)
+
+        cust_ids = [c.id for c in items]
+        bill_dues = {}
+        if cust_ids:
+            dues_query = (
+                db.query(Bill.customer_id, func.coalesce(func.sum(Bill.balance_due), 0))
+                .filter(Bill.customer_id.in_(cust_ids), Bill.balance_due > 0)
+                .group_by(Bill.customer_id)
+                .all()
+            )
+            bill_dues = {cid: float(amt) for cid, amt in dues_query}
+
         return {
-            "items": [
-                {"id": c.id, "name": c.name, "phone": c.phone, "address": c.address, "notes": c.notes, "is_active": c.is_active}
-                for c in items
-            ],
+            "items": [_format_customer(c, bill_dues) for c in items],
             "total": total,
             "page": page,
             "page_size": ps,
@@ -59,17 +86,49 @@ def list_customers(
     lim = limit or 200
     off = offset or 0
     items = q.order_by(Customer.name).offset(off).limit(lim).all()
-    return [
-        {"id": c.id, "name": c.name, "phone": c.phone, "address": c.address, "notes": c.notes, "is_active": c.is_active}
-        for c in items
-    ]
+    cust_ids = [c.id for c in items]
+    bill_dues = {}
+    if cust_ids:
+        dues_query = (
+            db.query(Bill.customer_id, func.coalesce(func.sum(Bill.balance_due), 0))
+            .filter(Bill.customer_id.in_(cust_ids), Bill.balance_due > 0)
+            .group_by(Bill.customer_id)
+            .all()
+        )
+        bill_dues = {cid: float(amt) for cid, amt in dues_query}
+
+    return [_format_customer(c, bill_dues) for c in items]
+
+
+@router.get("/{customer_id}")
+def get_customer(customer_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    c = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    bd = float(
+        db.query(func.coalesce(func.sum(Bill.balance_due), 0))
+        .filter(Bill.customer_id == customer_id, Bill.balance_due > 0)
+        .scalar() or 0.0
+    )
+    return _format_customer(c, {c.id: bd})
 
 
 @router.post("", status_code=201)
 def create_customer(body: CustomerIn, db: Session = Depends(get_db), _=Depends(get_current_user)):
     c = Customer(**body.model_dump())
     db.add(c); db.commit(); db.refresh(c)
-    return {"id": c.id, "name": c.name}
+    op = float(c.opening_balance or 0.0)
+    return {
+        "id": c.id,
+        "name": c.name,
+        "phone": c.phone,
+        "address": c.address,
+        "notes": c.notes,
+        "opening_balance": op,
+        "bills_balance": 0.0,
+        "total_balance": op,
+        "is_active": c.is_active,
+    }
 
 
 @router.put("/{customer_id}")
@@ -80,7 +139,12 @@ def update_customer(customer_id: int, body: CustomerIn, db: Session = Depends(ge
     for k, v in body.model_dump().items():
         setattr(c, k, v)
     db.commit(); db.refresh(c)
-    return {"id": c.id, "name": c.name}
+    bd = float(
+        db.query(func.coalesce(func.sum(Bill.balance_due), 0))
+        .filter(Bill.customer_id == customer_id, Bill.balance_due > 0)
+        .scalar() or 0.0
+    )
+    return _format_customer(c, {c.id: bd})
 
 
 @router.delete("/{customer_id}")
