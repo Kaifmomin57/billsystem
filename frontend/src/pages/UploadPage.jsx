@@ -2571,7 +2571,22 @@ export default function UploadPage() {
                                 </div>
                               )}
                               {row.is_new_customer && !fuzzySuggestion && (
-                                <span className="text-xs text-amber-400 mt-1 block">⚡ New customer</span>
+                                <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                                  <span className="text-xs text-amber-400 font-medium">⚡ New customer</span>
+                                  <select
+                                    onChange={(e) => {
+                                      if (e.target.value) handleCustomerNameChange(rIdx, e.target.value);
+                                    }}
+                                    className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700/80 text-xs text-zinc-300 rounded-lg px-2.5 py-1.5 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none cursor-pointer"
+                                  >
+                                    <option value="">— link to existing customer —</option>
+                                    {customers.map(c => (
+                                      <option key={c.id} value={c.name} className="bg-zinc-900 text-zinc-200">
+                                        {c.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
                               )}
                             </div>
                           </div>
