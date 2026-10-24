@@ -101,9 +101,9 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
                 "phone": c.phone or "",
                 "opening_balance": op_bal,
                 "bills_count": 0,
-                "total_sale": 0.0,
-                "amount_paid": 0.0,
-                "balance_due": 0.0,
+                "total_sales": 0.0,
+                "total_received": 0.0,
+                "total_pending": 0.0,
                 "total_balance": op_bal,
                 "profit_loss": None,  # Will be computed if purchase_prices are set
             }
@@ -113,10 +113,10 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
         b_due   = float(bill.balance_due or 0)
 
         cust_map[cid]["bills_count"] += 1
-        cust_map[cid]["total_sale"] += b_total
-        cust_map[cid]["amount_paid"] += b_paid
-        cust_map[cid]["balance_due"] += b_due
-        cust_map[cid]["total_balance"] = cust_map[cid]["balance_due"] + cust_map[cid]["opening_balance"]
+        cust_map[cid]["total_sales"] += b_total
+        cust_map[cid]["total_received"] += b_paid
+        cust_map[cid]["total_pending"] += b_due
+        cust_map[cid]["total_balance"] = cust_map[cid]["total_pending"] + cust_map[cid]["opening_balance"]
 
         items = bill.items
         if items:
@@ -154,14 +154,14 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
                         "product_name": pname,
                         "unit": punit,
                         "purchase_price": float(prod.purchase_price) if prod and prod.purchase_price is not None else None,
-                        "total_qty": 0.0,
+                        "total_quantity": 0.0,
                         "total_amount": 0.0,
                         "total_purchase_cost": 0.0,
                         "amount_paid": 0.0,
                         "balance_due": 0.0,
                     }
 
-                prod_map[pid]["total_qty"] += qty
+                prod_map[pid]["total_quantity"] += qty
                 prod_map[pid]["total_amount"] += amt
                 # Accumulate purchase cost for this product
                 pp = prod_map[pid]["purchase_price"]
@@ -201,9 +201,9 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
     # Prepare customer summary records
     customer_summaries = list(cust_map.values())
     for cs in customer_summaries:
-        tot = cs["total_sale"]
-        due = cs["balance_due"]
-        paid = cs["amount_paid"]
+        tot = cs["total_sales"]
+        due = cs["total_pending"]
+        paid = cs["total_received"]
         cs["payment_status"] = "paid" if tot > 0 and due <= 0 else "partial" if paid > 0 else "unpaid"
         if cs["profit_loss"] is not None:
             cs["profit_loss"] = round(cs["profit_loss"], 2)
@@ -213,11 +213,11 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
     # Prepare product summary records
     product_summaries = list(prod_map.values())
     for p in product_summaries:
-        qty = p["total_qty"]
+        qty = p["total_quantity"]
         amt = p["total_amount"]
         pp  = p["purchase_price"]
         p["avg_rate"] = round(amt / qty, 2) if qty > 0 else 0.0
-        p["total_sale"] = amt
+        p["total_sales"] = amt
         if pp is not None and qty > 0:
             p["total_cost"]   = round(p["total_purchase_cost"], 2)
             p["profit_loss"]  = round(amt - p["total_purchase_cost"], 2)
@@ -243,7 +243,7 @@ def _get_report_data_for_period(start: str, end: str, db: Session) -> Dict[str, 
         "collection_rate": round(collection_rate, 1),
         "total_bills": len(bills),
         "total_customers": len(customer_summaries),
-        "total_qty": sum(p["total_qty"] for p in product_summaries),
+        "total_qty": sum(p["total_quantity"] for p in product_summaries),
         "total_profit_loss": round(total_pl, 2) if has_pl else None,
     }
 

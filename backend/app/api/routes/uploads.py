@@ -250,10 +250,9 @@ async def upload_and_process_async(
     record_audit(
         db=db,
         action="upload_scan_queued",
-        entity="upload",
+        entity_type="upload",
         entity_id=str(upload_id),
         user_id=current_user.id,
-        username=current_user.username,
         changes={"filename": file.filename, "upload_type": upload_type, "job_id": job_id}
     )
 
