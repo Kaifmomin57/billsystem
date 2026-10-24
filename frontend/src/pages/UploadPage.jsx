@@ -887,6 +887,15 @@ export default function UploadPage() {
   const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
   const [billResult, setBillResult] = useState(null);
 
+  // Add Column state
+  const [isAddColumnOpen, setIsAddColumnOpen] = useState(false);
+  const [newColumnCode, setNewColumnCode] = useState("");
+  const [newColumnProductId, setNewColumnProductId] = useState("");
+
+  // Bulk Rate Change state — { colCode, rate } for the editing popover
+  const [rateEditCol, setRateEditCol] = useState(null); // colCode being edited
+  const [rateEditValue, setRateEditValue] = useState("");
+
   // Past Uploads Filter & Search
   const [historyFilter, setHistoryFilter] = useState("all"); // all | needs_review | saved
   const [historySearch, setHistorySearch] = useState("");
@@ -1278,15 +1287,67 @@ export default function UploadPage() {
     if (!activeDraft) return;
     const newDraft = { ...activeDraft };
     const rows = [...(newDraft.rows || [])];
+    // Pre-fill empty cells for every active column
+    const emptyCells = {};
+    columnCodes.forEach((code) => { emptyCells[code] = { quantity: null, confidence: 1.0 }; });
     rows.push({
       customer_name: "",
       is_new_customer: true,
-      cells: {},
+      cells: emptyCells,
     });
     newDraft.rows = rows;
     updateDraftWithHistory(newDraft);
     toast.success("New customer row added at bottom");
     setSelectedRowIndex(rows.length - 1);
+  };
+
+  // Add a new product column to the draft
+  const handleAddColumn = () => {
+    const code = newColumnCode.trim().toUpperCase();
+    if (!code) { toast.error("Enter a column code (e.g. R, K, JB)"); return; }
+    if (columnCodes.includes(code)) { toast.error(`Column "${code}" already exists`); return; }
+    const newDraft = { ...activeDraft };
+    newDraft.column_codes = [...(newDraft.column_codes || []), code];
+    // Add empty cell for every existing row
+    newDraft.rows = (newDraft.rows || []).map((row) => ({
+      ...row,
+      cells: { ...(row.cells || {}), [code]: { quantity: null, confidence: 1.0 } },
+    }));
+    updateDraftWithHistory(newDraft);
+    // If a product was selected, immediately save the column mapping
+    if (newColumnProductId) {
+      mapColumnMutation.mutate({ column_code: code, product_id: newColumnProductId });
+    }
+    setIsAddColumnOpen(false);
+    setNewColumnCode("");
+    setNewColumnProductId("");
+    toast.success(`Column "${code}" added`);
+  };
+
+  // Apply a rate override to every cell in a given column
+  const handleBulkRateChange = (colCode, newRate) => {
+    const rate = parseFloat(newRate);
+    if (isNaN(rate) || rate < 0) { toast.error("Enter a valid rate"); return; }
+    if (!activeDraft) return;
+    const newDraft = { ...activeDraft };
+    newDraft.rows = (newDraft.rows || []).map((row) => {
+      if (row.skip) return row;
+      const cells = { ...(row.cells || {}) };
+      const existing = cells[colCode] || {};
+      const qty = parseFloat(existing.quantity);
+      cells[colCode] = {
+        ...existing,
+        resolved_rate: rate,
+        rate: rate,
+        confidence: 1.0,
+        resolved_amount: (!isNaN(qty) && qty > 0) ? parseFloat((qty * rate).toFixed(2)) : existing.resolved_amount,
+      };
+      return { ...row, cells };
+    });
+    updateDraftWithHistory(newDraft);
+    setRateEditCol(null);
+    setRateEditValue("");
+    toast.success(`Rate updated to ₹${rate} for all rows in column ${colCode}`);
   };
 
   // Delete customer row
@@ -1845,11 +1906,17 @@ export default function UploadPage() {
                 />
               </div>
 
-              {/* Add Row + Merge — icons only on mobile */}
+              {/* Add Row + Add Column + Merge — icons only on mobile */}
               <button type="button" onClick={handleAddRow}
                 className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-2.5 sm:px-3">
                 <Plus className="w-4 h-4 text-emerald-400" />
                 <span className="hidden sm:inline">Add Row</span>
+              </button>
+
+              <button type="button" onClick={() => { setIsAddColumnOpen(true); setIsMappingExpanded(true); }}
+                className="btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-2.5 sm:px-3">
+                <Columns3 className="w-4 h-4 text-violet-400" />
+                <span className="hidden sm:inline">Add Column</span>
               </button>
 
               <button type="button" onClick={() => setIsMergeModalOpen(true)}
@@ -1922,46 +1989,149 @@ export default function UploadPage() {
               </div>
             ) : (
               /* Expanded Dropdown Selector Grid */
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 pt-2 border-t border-zinc-800 animate-in fade-in duration-150">
-                {columnCodes.map((code) => {
-                  const mapped = colToProductMap[code.toUpperCase()];
-                  return (
-                    <div
-                      key={code}
-                      className={`flex items-center gap-2 p-2 rounded-lg border text-xs ${mapped
-                        ? "bg-zinc-900 border-emerald-500/30"
-                        : "bg-amber-950/20 border-amber-500/30"
-                        }`}
-                    >
-                      <span className="font-mono font-bold px-2 py-1 rounded bg-zinc-800 text-zinc-100 text-xs">
-                        {code}
-                      </span>
-                      <ArrowRight className="w-3 h-3 text-zinc-600 shrink-0" />
-                      <select
-                        value={mapped?.product_id || ""}
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            mapColumnMutation.mutate({
-                              column_code: code,
-                              product_id: e.target.value,
-                            });
-                          }
-                        }}
-                        className={`bg-zinc-900 border rounded px-2 py-1 text-xs focus:outline-none focus:border-emerald-500 w-full truncate cursor-pointer ${mapped
-                          ? "border-emerald-500/40 text-emerald-300 font-semibold"
-                          : "border-amber-500/40 text-amber-400"
+              <div className="space-y-2 pt-2 border-t border-zinc-800 animate-in fade-in duration-150">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {columnCodes.map((code) => {
+                    const mapped = colToProductMap[code.toUpperCase()];
+                    const isEditingRate = rateEditCol === code;
+                    // Derive current effective rate for this column from draft cells
+                    const sampleRate = (() => {
+                      for (const row of (activeDraft?.rows || [])) {
+                        const r = row.cells?.[code]?.resolved_rate ?? row.cells?.[code]?.rate;
+                        if (r !== undefined && r !== null) return r;
+                      }
+                      return null;
+                    })();
+                    return (
+                      <div
+                        key={code}
+                        className={`flex flex-col gap-1.5 p-2 rounded-lg border text-xs ${mapped
+                          ? "bg-zinc-900 border-emerald-500/30"
+                          : "bg-amber-950/20 border-amber-500/30"
                           }`}
                       >
-                        <option value="">-- Map Product --</option>
-                        {products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} {p.product_code ? `[Code: ${p.product_code}]` : ""}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  );
-                })}
+                        {/* Row 1: Code → Product Select */}
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold px-2 py-1 rounded bg-zinc-800 text-zinc-100 text-xs shrink-0">
+                            {code}
+                          </span>
+                          <ArrowRight className="w-3 h-3 text-zinc-600 shrink-0" />
+                          <select
+                            value={mapped?.product_id || ""}
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                mapColumnMutation.mutate({
+                                  column_code: code,
+                                  product_id: e.target.value,
+                                });
+                              }
+                            }}
+                            className={`bg-zinc-900 border rounded px-2 py-1 text-xs focus:outline-none focus:border-emerald-500 w-full truncate cursor-pointer ${mapped
+                              ? "border-emerald-500/40 text-emerald-300 font-semibold"
+                              : "border-amber-500/40 text-amber-400"
+                              }`}
+                          >
+                            <option value="">-- Map Product --</option>
+                            {products.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name} {p.product_code ? `[Code: ${p.product_code}]` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {/* Row 2: Rate editor */}
+                        <div className="flex items-center gap-1.5 pl-1">
+                          <span className="text-zinc-500 text-[10px] font-medium shrink-0">Rate ₹:</span>
+                          {isEditingRate ? (
+                            <>
+                              <input
+                                autoFocus
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                value={rateEditValue}
+                                onChange={(e) => setRateEditValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleBulkRateChange(code, rateEditValue);
+                                  if (e.key === "Escape") { setRateEditCol(null); setRateEditValue(""); }
+                                }}
+                                placeholder={sampleRate ?? "Set rate"}
+                                className="bg-zinc-800 border border-emerald-500/60 rounded px-2 py-0.5 text-xs w-20 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-emerald-200 font-mono"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleBulkRateChange(code, rateEditValue)}
+                                className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold transition-colors"
+                              >
+                                Apply All
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setRateEditCol(null); setRateEditValue(""); }}
+                                className="p-0.5 text-zinc-500 hover:text-zinc-200 rounded"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => { setRateEditCol(code); setRateEditValue(sampleRate ?? ""); }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-[10px] font-mono text-zinc-300 hover:text-emerald-300 transition-colors"
+                              title="Change rate for all rows in this column"
+                            >
+                              {sampleRate !== null ? `₹${sampleRate}` : "Set rate"}
+                              <span className="text-zinc-600 text-[9px] ml-0.5">✎ all rows</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Add New Column inline form */}
+                {isAddColumnOpen && (
+                  <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg border border-violet-500/40 bg-violet-950/20 animate-in fade-in duration-150">
+                    <span className="text-xs font-bold text-violet-300 shrink-0">New Column:</span>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={newColumnCode}
+                      onChange={(e) => setNewColumnCode(e.target.value.toUpperCase())}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleAddColumn(); if (e.key === "Escape") setIsAddColumnOpen(false); }}
+                      placeholder="Code (e.g. JB)"
+                      maxLength={6}
+                      className="bg-zinc-900 border border-violet-500/50 rounded px-2.5 py-1 text-xs font-mono text-zinc-100 w-24 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                    />
+                    <select
+                      value={newColumnProductId}
+                      onChange={(e) => setNewColumnProductId(e.target.value)}
+                      className="bg-zinc-900 border border-violet-500/40 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none focus:border-violet-400 cursor-pointer flex-1 min-w-[140px]"
+                    >
+                      <option value="">-- Link Product (optional) --</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} {p.product_code ? `[${p.product_code}]` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleAddColumn}
+                      className="px-3 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setIsAddColumnOpen(false); setNewColumnCode(""); setNewColumnProductId(""); }}
+                      className="p-1 text-zinc-500 hover:text-zinc-200 rounded"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2125,21 +2295,66 @@ export default function UploadPage() {
                       {/* Active Product Columns */}
                       {activeColumns.map((code) => {
                         const mapped = colToProductMap[code.toUpperCase()];
+                        const isEditingHdrRate = rateEditCol === code;
+                        const sampleHdrRate = (() => {
+                          for (const row of (activeDraft?.rows || [])) {
+                            const r = row.cells?.[code]?.resolved_rate ?? row.cells?.[code]?.rate;
+                            if (r !== undefined && r !== null) return r;
+                          }
+                          return null;
+                        })();
                         return (
-                          <th key={code} className="py-2.5 px-2 text-center min-w-[85px] border-x border-zinc-800/40">
+                          <th key={code} className="py-2 px-2 text-center min-w-[100px] border-x border-zinc-800/40">
                             <div className="flex flex-col items-center gap-0.5">
                               <span className="font-mono font-bold text-zinc-100 text-sm">{code}</span>
                               {mapped ? (
                                 <span
-                                  className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/70 border border-emerald-500/30 px-1.5 py-0.2 rounded truncate max-w-[80px]"
+                                  className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/70 border border-emerald-500/30 px-1.5 rounded truncate max-w-[85px]"
                                   title={`Mapped to: ${mapped.name}`}
                                 >
                                   {mapped.name}
                                 </span>
                               ) : (
-                                <span className="text-[10px] text-amber-400/80 bg-amber-950/40 border border-amber-600/30 px-1.5 py-0.2 rounded font-medium">
+                                <span className="text-[10px] text-amber-400/80 bg-amber-950/40 border border-amber-600/30 px-1.5 rounded font-medium">
                                   ? Unmapped
                                 </span>
+                              )}
+                              {/* Rate chip / inline editor */}
+                              {isEditingHdrRate ? (
+                                <div className="flex items-center gap-0.5 mt-0.5" onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    autoFocus
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={rateEditValue}
+                                    onChange={(e) => setRateEditValue(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") handleBulkRateChange(code, rateEditValue);
+                                      if (e.key === "Escape") { setRateEditCol(null); setRateEditValue(""); }
+                                    }}
+                                    placeholder="rate"
+                                    className="bg-zinc-800 border border-emerald-500/70 rounded px-1.5 py-0.5 text-[10px] w-14 font-mono text-emerald-200 focus:outline-none"
+                                  />
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); handleBulkRateChange(code, rateEditValue); }}
+                                    className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold hover:bg-emerald-500">
+                                    ✓
+                                  </button>
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); setRateEditCol(null); setRateEditValue(""); }}
+                                    className="text-zinc-500 hover:text-zinc-200 text-[9px]">
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); setRateEditCol(code); setRateEditValue(sampleHdrRate ?? ""); setIsMappingExpanded(false); }}
+                                  className="mt-0.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-emerald-950 border border-zinc-700 hover:border-emerald-500/50 text-[10px] font-mono text-zinc-400 hover:text-emerald-400 transition-colors"
+                                  title="Click to change rate for all rows in this column"
+                                >
+                                  {sampleHdrRate !== null ? `₹${sampleHdrRate}` : "₹?"}
+                                  <span className="text-[8px] text-zinc-600">✎</span>
+                                </button>
                               )}
                             </div>
                           </th>
