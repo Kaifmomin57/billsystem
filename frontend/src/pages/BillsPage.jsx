@@ -92,6 +92,7 @@ export default function BillsPage() {
   const [editBillMeta, setEditBillMeta] = useState({
     customer_id: "",
     bill_date: new Date().toISOString().split("T")[0],
+    amount_paid: "",
     payment_method: "Cash",
   });
   const [ratesLoading, setRatesLoading] = useState(false);
@@ -274,6 +275,7 @@ export default function BillsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["bills"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
       toast.success("Bill updated successfully!");
       setIsEditBillModalOpen(false);
       setEditingBill(null);
@@ -440,6 +442,162 @@ export default function BillsPage() {
   const billBalance = useMemo(
     () => Math.max(0, billTotal - (parseFloat(billMeta.amount_paid) || 0)),
     [billTotal, billMeta.amount_paid]
+  );
+
+  // Edit Bill Handlers & Calculations
+  const handleOpenEditBill = async (bill) => {
+    let billData = bill;
+    if (!bill.items || bill.items.length === 0) {
+      try {
+        const res = await api.get(`/bills/${bill.id}`);
+        if (res.data) billData = res.data;
+      } catch (e) {
+        console.error("Failed to fetch bill details:", e);
+      }
+    }
+    setEditingBill(billData);
+    setEditBillMeta({
+      customer_id: billData.customer_id ? String(billData.customer_id) : "",
+      bill_date: billData.bill_date || new Date().toISOString().split("T")[0],
+      amount_paid:
+        billData.amount_paid !== undefined && billData.amount_paid !== null
+          ? String(billData.amount_paid)
+          : "0",
+      payment_method: billData.payment_method || "Cash",
+    });
+
+    const billItems = billData.items || [];
+    const usedProductIds = new Set();
+
+    const rows = products.map((p) => {
+      usedProductIds.add(p.id);
+      const bInfo = baseRateMap[p.id];
+      const defaultRate = bInfo?.rate ?? 0;
+      const defaultLiveRate = bInfo?.live_rate ?? defaultRate ?? "";
+
+      const normalItems = billItems.filter(
+        (it) => it.product_id === p.id && !it.is_live && !it.circled_value
+      );
+      const liveItems = billItems.filter(
+        (it) => it.product_id === p.id && (Boolean(it.is_live) || Boolean(it.circled_value))
+      );
+
+      const normalQty =
+        normalItems.length > 0
+          ? normalItems.reduce((acc, it) => acc + (parseFloat(it.quantity) || 0), 0)
+          : "";
+      const normalRate = normalItems.length > 0 ? normalItems[0].rate : defaultRate;
+
+      const liveQty =
+        liveItems.length > 0
+          ? liveItems.reduce((acc, it) => acc + (parseFloat(it.quantity) || 0), 0)
+          : "";
+      const liveRate = liveItems.length > 0 ? liveItems[0].rate : defaultLiveRate;
+
+      return {
+        product_id: p.id,
+        name: p.name,
+        unit: p.unit || "kg",
+        rate: normalRate,
+        quantity: normalQty,
+        live_rate: liveRate,
+        live_quantity: liveQty,
+      };
+    });
+
+    // Also include any items in bill whose product_id is not in active catalogue
+    billItems.forEach((it) => {
+      if (it.product_id && !usedProductIds.has(it.product_id)) {
+        usedProductIds.add(it.product_id);
+        const isLive = Boolean(it.is_live || it.circled_value);
+        rows.push({
+          product_id: it.product_id,
+          name: it.product_name || `Product #${it.product_id}`,
+          unit: it.unit || "kg",
+          rate: isLive ? 0 : it.rate,
+          quantity: isLive ? "" : it.quantity,
+          live_rate: isLive ? it.rate : "",
+          live_quantity: isLive ? it.quantity : "",
+        });
+      }
+    });
+
+    setEditProductRows(rows);
+    setIsEditBillModalOpen(true);
+  };
+
+  const handleEditCustomerChange = (customerId) => {
+    setEditBillMeta((prev) => ({ ...prev, customer_id: customerId }));
+  };
+
+  const handleEditSubmit = (e) => {
+    e.preventDefault();
+    if (!editingBill) return;
+    if (!editBillMeta.customer_id) {
+      toast.error("Please select a customer");
+      return;
+    }
+
+    const itemsToSave = [];
+    for (const r of editProductRows) {
+      const normalQ = parseFloat(r.quantity || 0);
+      const normalR = parseFloat(r.rate || 0);
+      if (normalQ > 0) {
+        itemsToSave.push({
+          product_id: r.product_id,
+          quantity: normalQ,
+          rate: normalR,
+          amount: parseFloat((normalQ * normalR).toFixed(2)),
+          is_live: false,
+          circled_value: null,
+        });
+      }
+
+      const liveQ = parseFloat(r.live_quantity || 0);
+      const liveR = parseFloat(r.live_rate || r.rate || 0);
+      if (liveQ > 0) {
+        itemsToSave.push({
+          product_id: r.product_id,
+          quantity: liveQ,
+          rate: liveR,
+          amount: parseFloat((liveQ * liveR).toFixed(2)),
+          is_live: true,
+          circled_value: String(liveR),
+        });
+      }
+    }
+
+    if (itemsToSave.length === 0) {
+      toast.error("Enter quantity (Normal or Live) for at least one product");
+      return;
+    }
+
+    updateBillMutation.mutate({
+      billId: editingBill.id,
+      payload: {
+        customer_id: parseInt(editBillMeta.customer_id),
+        bill_date: editBillMeta.bill_date,
+        amount_paid: parseFloat(editBillMeta.amount_paid || 0),
+        payment_method: editBillMeta.payment_method || "Cash",
+        items: itemsToSave,
+      },
+    });
+  };
+
+  const editBillTotal = useMemo(
+    () =>
+      editProductRows.reduce((s, r) => {
+        const normalAmt = (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0);
+        const liveRate = parseFloat(r.live_rate) || parseFloat(r.rate) || 0;
+        const liveAmt = (parseFloat(r.live_quantity) || 0) * liveRate;
+        return s + normalAmt + liveAmt;
+      }, 0),
+    [editProductRows]
+  );
+
+  const editBillBalance = useMemo(
+    () => Math.max(0, editBillTotal - (parseFloat(editBillMeta.amount_paid) || 0)),
+    [editBillTotal, editBillMeta.amount_paid]
   );
 
   const handlePaymentSubmit = (e) => {
@@ -777,6 +935,11 @@ export default function BillsPage() {
                                   onClick: () => setViewingBill(b),
                                 },
                                 {
+                                  label: "Edit bill",
+                                  icon: PencilSimple,
+                                  onClick: () => handleOpenEditBill(b),
+                                },
+                                {
                                   label: "Download PDF invoice",
                                   icon: FilePdf,
                                   onClick: () => downloadBillPdf(b),
@@ -898,6 +1061,11 @@ export default function BillsPage() {
                       <MoreActions
                         label="More actions"
                         items={[
+                          {
+                            label: "Edit bill",
+                            icon: PencilSimple,
+                            onClick: () => handleOpenEditBill(b),
+                          },
                           {
                             label: "Thermal Print (80mm)",
                             icon: Printer,
@@ -1214,6 +1382,292 @@ export default function BillsPage() {
         </form>
       </Modal>
 
+      {/* ─── 4-SECTION EDIT BILL MODAL (PRD v2 Section 12) ── */}
+      {isEditBillModalOpen && (
+        <Modal
+          isOpen={isEditBillModalOpen}
+          onClose={() => {
+            setIsEditBillModalOpen(false);
+            setEditingBill(null);
+          }}
+          title={`Edit Bill #${editingBill?.bill_no || ""}`}
+          subtitle="Update customer, products, quantities, rates, or payment details"
+          maxWidth="max-w-4xl"
+        >
+          <form onSubmit={handleEditSubmit} className="flex flex-col gap-6">
+            {/* SECTION 1: CUSTOMER SELECTION & PREVIOUS BALANCE */}
+            <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col gap-3">
+              <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+                <User size={18} weight="bold" className="text-emerald-400" />
+                <span>1. Customer & Bill Information</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField label="Select Customer" required>
+                  <Select
+                    value={editBillMeta.customer_id}
+                    onChange={(e) => handleEditCustomerChange(e.target.value)}
+                    required
+                  >
+                    <option value="">Choose customer…</option>
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.total_balance > 0 ? `(Due: ₹${c.total_balance})` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </FormField>
+
+                <FormField label="Bill Date" required>
+                  <Input
+                    type="date"
+                    value={editBillMeta.bill_date}
+                    onChange={(e) => setEditBillMeta({ ...editBillMeta, bill_date: e.target.value })}
+                    required
+                  />
+                </FormField>
+              </div>
+
+              {/* Customer balance banner */}
+              {editBillMeta.customer_id && (() => {
+                const selCust = customers.find((c) => String(c.id) === String(editBillMeta.customer_id));
+                if (!selCust) return null;
+                const totBal = parseFloat(selCust.total_balance || 0);
+                return totBal > 0 ? (
+                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-sm">
+                    <span className="text-amber-300 font-medium flex items-center gap-2">
+                      <WarningCircle size={18} weight="bold" />
+                      <span>Customer Outstanding Balance:</span>
+                    </span>
+                    <span className="font-mono font-bold text-amber-300 text-base tabular-nums">
+                      {formatINR(totBal)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-sm flex items-center gap-2">
+                    <CheckCircle size={18} weight="bold" />
+                    <span>Customer has zero previous pending balance.</span>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* SECTION 2: ITEMS & QUANTITIES (NORMAL + LIVE) */}
+            <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+                  <Receipt size={18} weight="bold" className="text-emerald-400" />
+                  <span>2. Products & Quantities</span>
+                </h3>
+                <span className="text-xs text-zinc-400">Modify quantities & rates below</span>
+              </div>
+
+              <div className="border border-zinc-800 rounded-lg overflow-x-auto">
+                <table className="data-table min-w-[620px]">
+                  <thead>
+                    <tr>
+                      <th className="w-44">Product</th>
+                      <th className="text-right w-24">Normal Rate</th>
+                      <th className="text-right w-24">Normal Qty</th>
+                      <th className="text-right w-24 text-sky-400">Live Rate</th>
+                      <th className="text-right w-24 text-emerald-400">Live Qty (⊚)</th>
+                      <th className="text-right w-28">Line Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {editProductRows.map((row, idx) => {
+                      const normalQ = parseFloat(row.quantity) || 0;
+                      const normalR = parseFloat(row.rate) || 0;
+                      const normalAmt = normalQ * normalR;
+
+                      const liveQ = parseFloat(row.live_quantity) || 0;
+                      const liveR = parseFloat(row.live_rate) || normalR;
+                      const liveAmt = liveQ * liveR;
+
+                      const rowAmt = normalAmt + liveAmt;
+
+                      return (
+                        <tr key={row.product_id} className={`min-h-[52px] ${liveQ > 0 ? "bg-emerald-950/20" : ""}`}>
+                          <td>
+                            <span className="font-semibold text-zinc-100 text-base">{row.name}</span>
+                            <span className="text-xs text-zinc-400 block font-mono">Unit: {row.unit}</span>
+                          </td>
+
+                          <td className="text-right">
+                            <input
+                              type="number"
+                              step="any"
+                              value={row.rate}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") e.preventDefault();
+                              }}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setEditProductRows((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, rate: val } : r))
+                                );
+                              }}
+                              className="input min-h-[38px] text-right font-mono py-1 px-2 w-24 text-base"
+                              placeholder="0.00"
+                            />
+                          </td>
+
+                          <td className="text-right">
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              placeholder="0"
+                              value={row.quantity}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") e.preventDefault();
+                              }}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setEditProductRows((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, quantity: val } : r))
+                                );
+                              }}
+                              className="input min-h-[38px] text-right font-mono font-bold text-zinc-100 py-1 px-2 w-24 text-base"
+                            />
+                          </td>
+
+                          <td className="text-right">
+                            <input
+                              type="number"
+                              step="any"
+                              value={row.live_rate ?? ""}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") e.preventDefault();
+                              }}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setEditProductRows((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, live_rate: val } : r))
+                                );
+                              }}
+                              className="input min-h-[38px] text-right font-mono py-1 px-2 w-24 text-base text-sky-300"
+                              placeholder="Live ₹"
+                            />
+                          </td>
+
+                          <td className="text-right">
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              placeholder="⊚ 0"
+                              value={row.live_quantity}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") e.preventDefault();
+                              }}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setEditProductRows((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, live_quantity: val } : r))
+                                );
+                              }}
+                              className="input min-h-[38px] text-right font-mono font-bold text-emerald-300 py-1 px-2 w-24 text-base"
+                            />
+                          </td>
+
+                          <td className="text-right cell-money text-base">
+                            {rowAmt > 0 ? formatINR(rowAmt) : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* SECTION 3: PAYMENT DETAILS */}
+            <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col gap-3">
+              <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+                <Wallet size={18} weight="bold" className="text-emerald-400" />
+                <span>3. Payment Details</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField label="Amount Paid (₹)">
+                  <Input
+                    type="number"
+                    step="any"
+                    min="0"
+                    max={editBillTotal}
+                    value={editBillMeta.amount_paid}
+                    onChange={(e) => setEditBillMeta({ ...editBillMeta, amount_paid: e.target.value })}
+                    placeholder="₹0.00"
+                    className="font-mono font-bold text-emerald-400"
+                  />
+                </FormField>
+
+                <FormField label="Payment Method">
+                  <Select
+                    value={editBillMeta.payment_method}
+                    onChange={(e) => setEditBillMeta({ ...editBillMeta, payment_method: e.target.value })}
+                  >
+                    <option value="Cash">Cash</option>
+                    <option value="UPI">UPI</option>
+                  </Select>
+                </FormField>
+              </div>
+            </div>
+
+            {/* SECTION 4: REVIEW SUMMARY & CONFIRMATION */}
+            <div className="p-5 rounded-xl bg-zinc-950 border border-zinc-700 flex flex-col gap-3">
+              <h3 className="text-base font-bold text-zinc-100">4. Review Summary</h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                  <span className="text-xs text-zinc-400 block">Updated Bill Total</span>
+                  <span className="font-mono font-bold text-zinc-100 text-lg mt-1 block tabular-nums">
+                    {formatINR(editBillTotal)}
+                  </span>
+                </div>
+                <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                  <span className="text-xs text-zinc-400 block">Amount Paid</span>
+                  <span className="font-mono font-bold text-emerald-400 text-lg mt-1 block tabular-nums">
+                    {formatINR(editBillMeta.amount_paid || 0)}
+                  </span>
+                </div>
+                <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                  <span className="text-xs text-zinc-400 block">Remaining Due</span>
+                  <span className="font-mono font-bold text-amber-300 text-lg mt-1 block tabular-nums">
+                    {formatINR(editBillBalance)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setIsEditBillModalOpen(false);
+                  setEditingBill(null);
+                }}
+                disabled={updateBillMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                size="submit"
+                isLoading={updateBillMutation.isPending}
+                loadingText="Updating bill…"
+              >
+                Save Changes
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {/* ─── RECORD PAYMENT MODAL ────────────────────────────────────── */}
       {paymentBill && (
         <Modal
@@ -1388,7 +1842,18 @@ export default function BillsPage() {
               </table>
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+            <div className="flex flex-wrap items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <Button
+                variant="secondary"
+                icon={PencilSimple}
+                onClick={() => {
+                  const b = viewingBill;
+                  setViewingBill(null);
+                  handleOpenEditBill(b);
+                }}
+              >
+                Edit Bill
+              </Button>
               <Button
                 variant="secondary"
                 icon={Printer}

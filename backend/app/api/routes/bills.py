@@ -503,8 +503,14 @@ def get_bill(bill_id: int, db: Session = Depends(get_db), current_user: User = D
     return _format_bill_out(bill, db)
 
 @router.put("/{bill_id}", response_model=BillOut)
-def edit_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Edit a bill's customer, date, items, and payment method"""
+def edit_bill(
+    bill_id: int,
+    data: BillUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Edit a bill's customer, date, items, payment method, and amount paid"""
     bill = db.query(Bill).filter(Bill.id == bill_id).first()
     if not bill: raise HTTPException(status_code=404, detail="Bill not found")
     
@@ -528,10 +534,14 @@ def edit_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db), cur
         db.query(BillItem).filter(BillItem.bill_id == bill_id).delete()
         
         # Calculate new total
-        new_total = sum((item.quantity * item.rate) for item in data.items)
+        new_total = sum((item.amount if item.amount is not None else (item.quantity * item.rate)) for item in data.items)
         
         # Recalculate payment status
-        current_paid = float(bill.amount_paid or 0)
+        if data.amount_paid is not None:
+            current_paid = max(0.0, float(data.amount_paid))
+        else:
+            current_paid = float(bill.amount_paid or 0)
+
         if current_paid > new_total:
             current_paid = new_total
         
@@ -559,8 +569,33 @@ def edit_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db), cur
                 is_live=bool(item.is_live),
                 confidence=item.confidence or 1.0, raw_text=item.raw_text
             ))
-    
+    elif data.amount_paid is not None:
+        current_paid = max(0.0, float(data.amount_paid))
+        new_total = float(bill.total_amount or 0)
+        if current_paid > new_total:
+            current_paid = new_total
+        new_bal = max(0.0, new_total - current_paid)
+        p_status = "paid" if current_paid >= new_total and new_total > 0 else "partial" if current_paid > 0 else "unpaid"
+        bill.amount_paid = current_paid
+        bill.balance_due = new_bal
+        bill.payment_status = p_status
+
     db.commit()
+
+    # Audit logging
+    req_id = getattr(request.state, "request_id", None) if request else None
+    client_ip = request.client.host if request and request.client else None
+    record_audit(
+        db=db,
+        action="edit_bill",
+        entity_type="bill",
+        entity_id=str(bill.id),
+        user_id=current_user.id,
+        changes={"bill_no": bill.bill_no, "total": float(bill.total_amount or 0), "paid": float(bill.amount_paid or 0), "customer_id": bill.customer_id},
+        request_id=req_id,
+        ip_address=client_ip
+    )
+
     eager_bill = _get_bill_eager(bill_id, db)
     return _format_bill_out(eager_bill, db)
 

@@ -171,6 +171,7 @@ class BillUpdate(BaseModel):
     bill_date: Optional[str] = None
     items: Optional[List[BillItemCreate]] = None
     payment_method: Optional[str] = None
+    amount_paid: Optional[float] = None
 
 class BillPaymentUpdate(BaseModel):
     installment_amount: float   # The NEW amount being paid in this installment
