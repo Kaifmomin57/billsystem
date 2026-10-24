@@ -1,11 +1,18 @@
 from typing import List, Optional, Dict, Any, Union
+import os
+import time
 import uuid
 import urllib.parse
-from fastapi import APIRouter, Depends, HTTPException, Response, Query
+from fastapi import APIRouter, Depends, HTTPException, Response, Query, Header, Request, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.config import get_settings
+from app.core.idempotency import check_and_save_idempotency
+from app.core.audit import record_audit
+from app.core.signing import generate_signed_url
+from app.services.job_service import create_job, run_async_task, update_job_progress, complete_job, fail_job
 from app.models.models import Bill, BillItem, Customer, Product, User, PaymentInstallment
 from app.schemas.schemas import (
     BillCreate, BillUpdate, BillOut, BillItemOut, BillPaymentUpdate,
@@ -16,6 +23,7 @@ from app.services.whatsapp_service import send_whatsapp_direct, clean_phone_numb
 from app.services.cloudinary_service import upload_image_to_cloudinary
 
 router = APIRouter(prefix="/bills", tags=["bills"])
+settings = get_settings()
 
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -59,6 +67,7 @@ def _format_single_bill(bill, all_customer_unpaid=None):
             unit=prod.unit if (prod and prod.unit) else "kg",
             quantity=float(item.quantity or 0), rate=float(item.rate or 0),
             amount=float(item.amount or 0), tag=item.tag, circled_value=item.circled_value,
+            is_live=bool(item.is_live),
             confidence=float(item.confidence) if item.confidence is not None else 1.0,
             raw_text=item.raw_text
         ))
@@ -246,39 +255,74 @@ def list_bills(
     return formatted
 
 @router.post("", response_model=BillOut)
-def create_manual_bill(data: BillCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    cust = db.query(Customer).filter(Customer.id == data.customer_id).first()
-    if not cust: raise HTTPException(status_code=404, detail="Customer not found")
-    bill_no = "BILL-" + data.bill_date.replace("-", "") + "-" + str(uuid.uuid4())[:6].upper()
-    total = sum((item.quantity * item.rate) for item in data.items)
-    paid = max(0.0, float(data.amount_paid or 0))
-    if paid > total: paid = total
-    bal = max(0.0, total - paid)
-    p_status = "paid" if paid >= total and total > 0 else "partial" if paid > 0 else "unpaid"
-    bill = Bill(
-        customer_id=data.customer_id, bill_no=bill_no, bill_date=data.bill_date,
-        total_amount=total, amount_paid=paid, balance_due=bal, payment_status=p_status,
-        payment_method=data.payment_method or "Cash", source=data.source,
-        upload_id=data.upload_id, image_path=data.image_path, status="active"
+def create_manual_bill(
+    data: BillCreate,
+    request: Request,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    def _execute():
+        cust = db.query(Customer).filter(Customer.id == data.customer_id).first()
+        if not cust:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        bill_no = "BILL-" + data.bill_date.replace("-", "") + "-" + str(uuid.uuid4())[:6].upper()
+        total = sum((item.quantity * item.rate) for item in data.items)
+        paid = max(0.0, float(data.amount_paid or 0))
+        if paid > total:
+            paid = total
+        bal = max(0.0, total - paid)
+        p_status = "paid" if paid >= total and total > 0 else "partial" if paid > 0 else "unpaid"
+        bill = Bill(
+            customer_id=data.customer_id, bill_no=bill_no, bill_date=data.bill_date,
+            total_amount=total, amount_paid=paid, balance_due=bal, payment_status=p_status,
+            payment_method=data.payment_method or "Cash", source=data.source,
+            upload_id=data.upload_id, image_path=data.image_path, status="active"
+        )
+        db.add(bill)
+        db.flush()
+        for item in data.items:
+            line_total = item.amount if item.amount is not None else (item.quantity * item.rate)
+            db.add(BillItem(
+                bill_id=bill.id, product_id=item.product_id, quantity=item.quantity,
+                rate=item.rate, amount=line_total, tag=item.tag, circled_value=item.circled_value,
+                is_live=bool(item.is_live),
+                confidence=item.confidence or 1.0, raw_text=item.raw_text
+            ))
+        if paid > 0:
+            db.add(PaymentInstallment(
+                bill_id=bill.id, amount=paid,
+                payment_method=data.payment_method or "Cash",
+                note="Initial payment at bill creation"
+            ))
+        db.commit()
+
+        # Audit logging (PRD Section 9)
+        req_id = getattr(request.state, "request_id", None)
+        client_ip = request.client.host if request.client else None
+        record_audit(
+            db=db,
+            action="create_bill",
+            entity_type="bill",
+            entity_id=str(bill.id),
+            user_id=current_user.id,
+            changes={"bill_no": bill.bill_no, "total": float(total), "paid": float(paid), "customer_id": data.customer_id},
+            request_id=req_id,
+            ip_address=client_ip
+        )
+
+        eager_bill = _get_bill_eager(bill.id, db)
+        return _format_bill_out(eager_bill, db)
+
+    payload_dict = data.model_dump() if hasattr(data, "model_dump") else data.dict()
+    return check_and_save_idempotency(
+        db=db,
+        key=idempotency_key,
+        route="/bills",
+        payload_dict=payload_dict,
+        execute_fn=_execute,
+        user_id=current_user.id
     )
-    db.add(bill)
-    db.flush()
-    for item in data.items:
-        line_total = item.amount if item.amount is not None else (item.quantity * item.rate)
-        db.add(BillItem(
-            bill_id=bill.id, product_id=item.product_id, quantity=item.quantity,
-            rate=item.rate, amount=line_total, tag=item.tag, circled_value=item.circled_value,
-            confidence=item.confidence or 1.0, raw_text=item.raw_text
-        ))
-    if paid > 0:
-        db.add(PaymentInstallment(
-            bill_id=bill.id, amount=paid,
-            payment_method=data.payment_method or "Cash",
-            note="Initial payment at bill creation"
-        ))
-    db.commit()
-    eager_bill = _get_bill_eager(bill.id, db)
-    return _format_bill_out(eager_bill, db)
 
 # IMPORTANT: Specific routes must come BEFORE generic {bill_id} route
 
@@ -371,6 +415,85 @@ def bulk_send_whatsapp(payload: BulkWhatsAppRequest, db: Session = Depends(get_d
         "details": results
     }
 
+@router.post("/bulk-whatsapp/async", status_code=status.HTTP_202_ACCEPTED)
+def bulk_send_whatsapp_async(
+    payload: BulkWhatsAppRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """PRD Section 7: Dispatches bulk WhatsApp delivery as a durable background job with live progress."""
+    job_id = create_job("bulk_whatsapp", {"bill_ids": payload.bill_ids, "delay_seconds": payload.delay_seconds}, user_id=current_user.id)
+
+    def _worker(jid: str):
+        from app.core.database import SessionLocal
+        task_db = SessionLocal()
+        try:
+            update_job_progress(jid, 5, "Preparing WhatsApp queue…")
+            total = len(payload.bill_ids)
+            sent_count = 0
+            failed_count = 0
+            skipped_count = 0
+            results = []
+
+            for idx, b_id in enumerate(payload.bill_ids):
+                b = _get_bill_eager(b_id, task_db)
+                if not b:
+                    results.append({"bill_id": b_id, "status": "failed", "error": "Bill not found"})
+                    failed_count += 1
+                    continue
+
+                data = _build_bill_whatsapp_payload(b, task_db)
+                cleaned_phone = data["phone"]
+                if not cleaned_phone:
+                    results.append({
+                        "bill_id": b_id,
+                        "bill_no": data["formatted"].bill_no,
+                        "customer_name": data["formatted"].customer_name,
+                        "status": "skipped",
+                        "error": "No phone number saved"
+                    })
+                    skipped_count += 1
+                    continue
+
+                send_res = send_whatsapp_direct(
+                    phone=cleaned_phone,
+                    message=data["message"],
+                    pdf_bytes=data["pdf_bytes"],
+                    pdf_url=data["pdf_url"],
+                    pdf_filename=data["pdf_filename"]
+                )
+                if send_res.get("success"):
+                    sent_count += 1
+                    results.append({"bill_id": b_id, "status": "sent", "phone": cleaned_phone})
+                else:
+                    failed_count += 1
+                    results.append({"bill_id": b_id, "status": "failed", "error": send_res.get("error")})
+
+                pct = int(10 + ((idx + 1) / total) * 85)
+                update_job_progress(jid, pct, f"Sent {sent_count}/{total} WhatsApp messages…")
+                if payload.delay_seconds > 0 and idx < total - 1:
+                    time.sleep(payload.delay_seconds)
+
+            complete_job(jid, {
+                "total": total,
+                "sent": sent_count,
+                "failed": failed_count,
+                "skipped": skipped_count,
+                "details": results
+            })
+        except Exception as exc:
+            fail_job(jid, str(exc))
+        finally:
+            task_db.close()
+
+    run_async_task(job_id, _worker)
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "status_url": f"/jobs/{job_id}",
+        "message": "Bulk WhatsApp dispatch queued"
+    }
+
 # Generic {bill_id} routes come AFTER specific ones
 
 @router.get("/{bill_id}", response_model=BillOut)
@@ -433,6 +556,7 @@ def edit_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db), cur
             db.add(BillItem(
                 bill_id=bill.id, product_id=item.product_id, quantity=item.quantity,
                 rate=item.rate, amount=line_total, tag=item.tag, circled_value=item.circled_value,
+                is_live=bool(item.is_live),
                 confidence=item.confidence or 1.0, raw_text=item.raw_text
             ))
     
@@ -441,46 +565,114 @@ def edit_bill(bill_id: int, data: BillUpdate, db: Session = Depends(get_db), cur
     return _format_bill_out(eager_bill, db)
 
 @router.put("/{bill_id}/payment", response_model=BillOut)
-def update_bill_payment(bill_id: int, data: BillPaymentUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill: raise HTTPException(status_code=404, detail="Bill not found")
-    tot = float(bill.total_amount or 0)
-    current_paid = float(bill.amount_paid or 0)
-    current_balance = float(bill.balance_due if bill.balance_due is not None else max(0.0, tot - current_paid))
-    installment = float(data.installment_amount or 0)
-    if installment <= 0:
-        raise HTTPException(status_code=400, detail="Payment amount must be greater than zero")
-    if installment > current_balance + 0.001:
-        raise HTTPException(status_code=400, detail="Payment Rs" + str(round(installment,2)) + " exceeds remaining balance Rs" + str(round(current_balance,2)) + ". Cannot overpay.")
-    new_paid = current_paid + installment
-    new_bal = max(0.0, tot - new_paid)
-    if new_paid >= tot: new_paid = tot; new_bal = 0.0; p_status = "paid"
-    elif new_paid > 0: p_status = "partial"
-    else: p_status = "unpaid"
-    prev_method = bill.payment_method or "Cash"
-    new_method = data.payment_method or "Cash"
-    if current_paid > 0 and prev_method != new_method and prev_method != "Mixed":
-        combined_method = "Mixed"
-    else:
-        combined_method = new_method
-    bill.amount_paid = new_paid
-    bill.balance_due = new_bal
-    bill.payment_status = p_status
-    bill.payment_method = combined_method
-    db.add(PaymentInstallment(bill_id=bill.id, amount=installment, payment_method=new_method, note=data.note))
-    db.commit()
-    eager_bill = _get_bill_eager(bill_id, db)
-    return _format_bill_out(eager_bill, db)
+def update_bill_payment(
+    bill_id: int,
+    data: BillPaymentUpdate,
+    request: Request,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    def _execute():
+        bill = db.query(Bill).filter(Bill.id == bill_id).first()
+        if not bill:
+            raise HTTPException(status_code=404, detail="Bill not found")
+        tot = float(bill.total_amount or 0)
+        current_paid = float(bill.amount_paid or 0)
+        current_balance = float(bill.balance_due if bill.balance_due is not None else max(0.0, tot - current_paid))
+        installment = float(data.installment_amount or 0)
+        if installment <= 0:
+            raise HTTPException(status_code=400, detail="Payment amount must be greater than zero")
+        if installment > current_balance + 0.001:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment Rs{round(installment, 2)} exceeds remaining balance Rs{round(current_balance, 2)}. Cannot overpay."
+            )
+        new_paid = current_paid + installment
+        new_bal = max(0.0, tot - new_paid)
+        if new_paid >= tot:
+            new_paid = tot
+            new_bal = 0.0
+            p_status = "paid"
+        elif new_paid > 0:
+            p_status = "partial"
+        else:
+            p_status = "unpaid"
+        prev_method = bill.payment_method or "Cash"
+        new_method = data.payment_method or "Cash"
+        if current_paid > 0 and prev_method != new_method and prev_method != "Mixed":
+            combined_method = "Mixed"
+        else:
+            combined_method = new_method
+        bill.amount_paid = new_paid
+        bill.balance_due = new_bal
+        bill.payment_status = p_status
+        bill.payment_method = combined_method
+        db.add(PaymentInstallment(bill_id=bill.id, amount=installment, payment_method=new_method, note=data.note))
+        db.commit()
+
+        # Audit logging (PRD Section 9)
+        req_id = getattr(request.state, "request_id", None)
+        client_ip = request.client.host if request.client else None
+        record_audit(
+            db=db,
+            action="record_payment",
+            entity_type="payment",
+            entity_id=str(bill.id),
+            user_id=current_user.id,
+            changes={"bill_id": bill_id, "installment": installment, "method": new_method, "remaining_balance": new_bal},
+            request_id=req_id,
+            ip_address=client_ip
+        )
+
+        eager_bill = _get_bill_eager(bill_id, db)
+        return _format_bill_out(eager_bill, db)
+
+    payload_dict = data.model_dump() if hasattr(data, "model_dump") else data.dict()
+    return check_and_save_idempotency(
+        db=db,
+        key=idempotency_key,
+        route=f"/bills/{bill_id}/payment",
+        payload_dict=payload_dict,
+        execute_fn=_execute,
+        user_id=current_user.id
+    )
 
 @router.delete("/{bill_id}")
-def delete_bill(bill_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def delete_bill(
+    bill_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill: raise HTTPException(status_code=404, detail="Bill not found")
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+
+    bill_no = bill.bill_no
+    cust_id = bill.customer_id
+    tot = float(bill.total_amount or 0)
+
     db.query(BillItem).filter(BillItem.bill_id == bill_id).delete()
     db.query(PaymentInstallment).filter(PaymentInstallment.bill_id == bill_id).delete()
     db.delete(bill)
     db.commit()
-    return {"message": "Bill deleted successfully"}
+
+    # Audit logging
+    req_id = getattr(request.state, "request_id", None)
+    client_ip = request.client.host if request.client else None
+    record_audit(
+        db=db,
+        action="delete_bill",
+        entity_type="bill",
+        entity_id=str(bill_id),
+        user_id=current_user.id,
+        changes={"bill_no": bill_no, "customer_id": cust_id, "total": tot},
+        request_id=req_id,
+        ip_address=client_ip
+    )
+
+    return {"message": f"Bill #{bill_no} deleted successfully"}
 
 def _format_whatsapp_message(formatted) -> str:
     status_emoji = (
@@ -541,11 +733,12 @@ def _build_bill_pdf_dict(formatted) -> Dict[str, Any]:
         ],
         "items": [
             {
-                "name": item.product_name or "Custom Item",
+                "name": f"{item.product_name or 'Custom Item'}{' (Live)' if item.is_live else ''}",
                 "unit": item.unit or "kg",
                 "quantity": item.quantity,
                 "rate": item.rate,
-                "amount": item.amount
+                "amount": item.amount,
+                "is_live": bool(item.is_live),
             }
             for item in formatted.items
         ],
@@ -582,6 +775,62 @@ def get_bill_pdf(bill_id: int, db: Session = Depends(get_db)):
         }
     )
 
+@router.get("/{bill_id}/pdf/async", status_code=status.HTTP_202_ACCEPTED)
+def get_bill_pdf_async(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """PRD Section 7 & Section 3 (#3): Offload PDF generation to background job, returning 202 Accepted with job_id."""
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+
+    job_id = create_job("pdf_generation", {"bill_id": bill_id}, user_id=current_user.id)
+
+    def _worker(jid: str):
+        from app.core.database import SessionLocal
+        task_db = SessionLocal()
+        try:
+            update_job_progress(jid, 20, "Fetching bill details…")
+            b = _get_bill_eager(bill_id, task_db)
+            if not b:
+                fail_job(jid, "Bill not found")
+                return
+
+            update_job_progress(jid, 50, "Rendering PDF invoice layout…")
+            formatted = _format_bill_out(b, task_db)
+            bill_dict = _build_bill_pdf_dict(formatted)
+            pdf_bytes = generate_bill_pdf(bill_dict)
+
+            update_job_progress(jid, 85, "Saving and signing invoice URL…")
+            out_dir = os.path.join(settings.UPLOAD_DIR, "generated_pdfs")
+            os.makedirs(out_dir, exist_ok=True)
+            filename = f"Invoice_{formatted.bill_no or bill_id}.pdf"
+            file_path = os.path.join(out_dir, filename)
+            with open(file_path, "wb") as f:
+                f.write(pdf_bytes)
+
+            signed_url = generate_signed_url(f"generated_pdfs/{filename}")
+            complete_job(jid, {
+                "download_url": signed_url,
+                "filename": filename,
+                "bill_no": formatted.bill_no,
+                "bill_id": bill_id
+            })
+        except Exception as exc:
+            fail_job(jid, str(exc))
+        finally:
+            task_db.close()
+
+    run_async_task(job_id, _worker)
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "status_url": f"/jobs/{job_id}",
+        "message": "PDF invoice generation queued"
+    }
+
 @router.get("/{bill_id}/whatsapp-link")
 def get_whatsapp_share_link(bill_id: int, db: Session = Depends(get_db)):
     """Returns formatted WhatsApp message & click-to-chat URL."""
@@ -604,6 +853,8 @@ def get_whatsapp_share_link(bill_id: int, db: Session = Depends(get_db)):
         "whatsapp_url": wa_url
     }
 
+@router.post("/{bill_id}/whatsapp")
+@router.get("/{bill_id}/whatsapp")
 @router.post("/{bill_id}/send-whatsapp")
 def send_bill_whatsapp_direct(bill_id: int, db: Session = Depends(get_db)):
     """Dispatches a single bill invoice PDF directly to customer via OpenWA / WhatsApp."""

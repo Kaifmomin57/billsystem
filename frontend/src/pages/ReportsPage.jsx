@@ -1,44 +1,76 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Download, Calendar, Users, Package,
-  FileSpreadsheet, Search, CheckCircle2,
-  AlertCircle, ArrowUpRight, Percent, RefreshCw
-} from "lucide-react";
+  DownloadSimple,
+  CalendarBlank,
+  Users,
+  Package,
+  MagnifyingGlass,
+  CheckCircle,
+  WarningCircle,
+  ArrowUpRight,
+  Percent,
+  ArrowsClockwise,
+  TrendUp,
+  TrendDown,
+  ChartBar,
+  CurrencyInr,
+  Wallet,
+} from "@phosphor-icons/react";
 import toast from "react-hot-toast";
 import api from "../lib/api";
-import { formatCurrency, downloadBlob } from "../lib/utils";
+import { formatINR, formatDateIN } from "../lib/formatters";
+import { downloadBlob } from "../lib/utils";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { FormField } from "../components/ui/FormField";
+import { EmptyState } from "../components/ui/EmptyState";
+import { CardSkeleton, TableSkeleton } from "../components/ui/Skeleton";
 import Pagination from "../components/Pagination";
 
 const PAGE_SIZE = 10;
 
+function StatCard({ label, value, subtext, icon: Icon, badgeClasses }) {
+  return (
+    <div className="card p-5 flex flex-col justify-between">
+      <div className="flex items-start justify-between">
+        <span className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">{label}</span>
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${badgeClasses}`}>
+          <Icon size={20} weight="bold" />
+        </div>
+      </div>
+      <div className="mt-3">
+        <div className="text-2xl sm:text-3xl font-bold font-mono tracking-tight text-zinc-100 tabular-nums">
+          {value}
+        </div>
+        {subtext && <p className="text-sm text-zinc-400 mt-1">{subtext}</p>}
+      </div>
+    </div>
+  );
+}
+
 export default function ReportsPage() {
   const todayStr = new Date().toISOString().slice(0, 10);
   const [dateFrom, setDateFrom] = useState(todayStr);
-  const [dateTo, setDateTo]     = useState(todayStr);
+  const [dateTo, setDateTo] = useState(todayStr);
   const [activeTab, setActiveTab] = useState("customers"); // "customers" | "products"
   const [searchTerm, setSearchTerm] = useState("");
   const [custPage, setCustPage] = useState(1);
   const [prodPage, setProdPage] = useState(1);
   const [downloading, setDownloading] = useState(null);
 
-  // Quick preset filter buttons
+  // PRD v2 Date Presets: Today, This Week, This Month, Custom
   const applyPreset = (preset) => {
     const today = new Date();
     if (preset === "today") {
       const s = today.toISOString().slice(0, 10);
       setDateFrom(s);
       setDateTo(s);
-    } else if (preset === "yesterday") {
-      const y = new Date(today);
-      y.setDate(y.getDate() - 1);
-      const s = y.toISOString().slice(0, 10);
-      setDateFrom(s);
-      setDateTo(s);
-    } else if (preset === "7days") {
-      const past = new Date(today);
-      past.setDate(past.getDate() - 6);
-      setDateFrom(past.toISOString().slice(0, 10));
+    } else if (preset === "week") {
+      const startOfWeek = new Date(today);
+      startOfWeek.setDate(today.getDate() - today.getDay());
+      setDateFrom(startOfWeek.toISOString().slice(0, 10));
       setDateTo(today.toISOString().slice(0, 10));
     } else if (preset === "month") {
       const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -47,8 +79,13 @@ export default function ReportsPage() {
     }
   };
 
-  // Fetch summary report data for current date range
-  const { data: reportData, isLoading, refetch } = useQuery({
+  const dateLabel = () => {
+    if (dateFrom === dateTo) return formatDateIN(dateFrom);
+    return `${formatDateIN(dateFrom)} – ${formatDateIN(dateTo)}`;
+  };
+
+  // Fetch report summary
+  const { data: reportData, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["reports-summary", dateFrom, dateTo],
     queryFn: async () => {
       const res = await api.get("/reports/summary", {
@@ -70,13 +107,20 @@ export default function ReportsPage() {
   const customers = reportData?.customers || [];
   const products = reportData?.products || [];
 
-  const filteredCustomers = customers.filter((c) =>
-    (c.customer_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (c.phone || "").includes(searchTerm)
+  const filteredCustomers = useMemo(() =>
+    customers.filter(
+      (c) =>
+        (c.customer_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (c.phone || "").includes(searchTerm)
+    ),
+    [customers, searchTerm]
   );
 
-  const filteredProducts = products.filter((p) =>
-    (p.product_name || "").toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredProducts = useMemo(() =>
+    products.filter((p) =>
+      (p.product_name || "").toLowerCase().includes(searchTerm.toLowerCase())
+    ),
+    [products, searchTerm]
   );
 
   const totalCustPages = Math.ceil(filteredCustomers.length / PAGE_SIZE) || 1;
@@ -91,16 +135,31 @@ export default function ReportsPage() {
     return filteredProducts.slice(start, start + PAGE_SIZE);
   }, [filteredProducts, prodPage]);
 
+  const totalPL = useMemo(() =>
+    products.reduce(
+      (sum, p) => (p.profit_loss !== null && p.profit_loss !== undefined ? sum + p.profit_loss : sum),
+      0
+    ),
+    [products]
+  );
+
+  const hasPL = useMemo(() =>
+    products.some((p) => p.profit_loss !== null && p.profit_loss !== undefined),
+    [products]
+  );
+
   const downloadReport = async (type) => {
     setDownloading(type);
     try {
-      toast.loading(`Generating ${type === "by-customer" ? "Customer" : "Product"} Excel report...`, { id: "report-toast" });
+      toast.loading(`Generating ${type === "by-customer" ? "Customer" : "Product"} Excel report…`, {
+        id: "report-toast",
+      });
       const res = await api.get(`/reports/daily/${type}`, {
         params: { date_from: dateFrom, date_to: dateTo },
         responseType: "blob",
       });
       const label = dateFrom === dateTo ? dateFrom : `${dateFrom}_to_${dateTo}`;
-      const filename = `daily_${type}_${label}.xlsx`;
+      const filename = `report_${type}_${label}.xlsx`;
       downloadBlob(res.data, filename);
       toast.success(`${filename} downloaded!`, { id: "report-toast" });
     } catch {
@@ -112,350 +171,367 @@ export default function ReportsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-zinc-100 tracking-tight">
-            Financial Reports
-          </h1>
-          <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
-            Daily product totals, customer sales breakdown, and Excel exports
-          </p>
-        </div>
-
-        {/* Excel Export Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
+      {/* PRD v2 Page Header */}
+      <PageHeader
+        title="Reports"
+        purpose="Understand financial performance across customers, products, and date ranges"
+        primaryAction={
+          <Button
+            variant="primary"
+            icon={DownloadSimple}
+            isLoading={downloading === "by-customer"}
+            loadingText="Preparing…"
             onClick={() => downloadReport("by-customer")}
-            disabled={!!downloading}
-            className="btn-primary text-xs sm:text-sm flex items-center gap-1.5"
+            disabled={Boolean(downloading)}
           >
-            {downloading === "by-customer" ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <Download className="w-4 h-4" />
-            )}
-            <span>Customer Excel (.xlsx)</span>
-          </button>
-
-          <button
+            Customer Report
+          </Button>
+        }
+        secondaryAction={
+          <Button
+            variant="secondary"
+            icon={DownloadSimple}
+            isLoading={downloading === "by-product"}
+            loadingText="Preparing…"
             onClick={() => downloadReport("by-product")}
-            disabled={!!downloading}
-            className="btn-secondary text-xs sm:text-sm flex items-center gap-1.5"
+            disabled={Boolean(downloading)}
           >
-            {downloading === "by-product" ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <Package className="w-4 h-4 text-emerald-400" />
-            )}
-            <span>Product Excel (.xlsx)</span>
-          </button>
+            Product Report
+          </Button>
+        }
+        moreActions={[
+          {
+            label: isFetching ? "Refreshing…" : "Refresh report",
+            icon: ArrowsClockwise,
+            onClick: () => refetch(),
+          },
+        ]}
+      />
+
+      {/* Date Filter Bar with PRD v2 Presets */}
+      <div className="card p-4 flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 min-w-0 w-full sm:w-auto">
+            <div className="flex items-center gap-2 text-sm text-zinc-400 font-medium shrink-0">
+              <CalendarBlank size={18} weight="bold" className="text-emerald-400" />
+              <span>Date Range:</span>
+            </div>
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 w-full sm:w-auto min-w-0">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="input min-h-[44px] text-sm sm:text-base py-1.5 px-2 sm:px-3 w-full min-w-0 font-mono"
+              />
+              <span className="text-zinc-500 text-sm text-center">to</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="input min-h-[44px] text-sm sm:text-base py-1.5 px-2 sm:px-3 w-full min-w-0 font-mono"
+              />
+            </div>
+          </div>
+
+          {/* Quick Date Presets */}
+          <div className="grid grid-cols-3 sm:flex segmented-nav w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => applyPreset("today")}
+              className={`segmented-item text-center ${dateFrom === dateTo && dateFrom === new Date().toISOString().slice(0, 10) ? "active" : ""}`}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset("week")}
+              className="segmented-item text-center"
+            >
+              This Week
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset("month")}
+              className="segmented-item text-center"
+            >
+              This Month
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Date Filter & Preset Chips */}
-      <div className="card p-3.5 sm:p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-medium mr-1">
-            <Calendar className="w-4 h-4 text-emerald-400" />
-            <span>Date Range:</span>
-          </div>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="input-field text-xs py-1.5 px-2.5 w-auto"
+      {/* 5 KPI Summary Cards (PRD v2 Section 12: Sales, Collected, Outstanding, Net P&L, Bills) */}
+      {isLoading ? (
+        <CardSkeleton count={5} />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <StatCard
+            label="Total Sales"
+            value={formatINR(totals.total_sales)}
+            subtext={`${totals.total_bills} bill(s)`}
+            icon={CurrencyInr}
+            badgeClasses="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
           />
-          <span className="text-zinc-600 text-xs">to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="input-field text-xs py-1.5 px-2.5 w-auto"
+          <StatCard
+            label="Collected"
+            value={formatINR(totals.total_received)}
+            subtext="Cash & UPI received"
+            icon={Wallet}
+            badgeClasses="bg-sky-500/10 text-sky-400 border border-sky-500/30"
           />
-        </div>
-
-        {/* Presets */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <button
-            type="button"
-            onClick={() => applyPreset("today")}
-            className="btn-secondary btn-sm !py-1 text-xs"
-          >
-            Today
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset("yesterday")}
-            className="btn-secondary btn-sm !py-1 text-xs"
-          >
-            Yesterday
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset("7days")}
-            className="btn-secondary btn-sm !py-1 text-xs"
-          >
-            7 Days
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset("month")}
-            className="btn-secondary btn-sm !py-1 text-xs"
-          >
-            This Month
-          </button>
-          <button
-            type="button"
-            onClick={() => refetch()}
-            className="btn-ghost btn-sm !p-1.5 text-zinc-400 hover:text-zinc-200"
-            title="Refresh Report Data"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
-          </button>
-        </div>
-      </div>
-
-      {/* Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="card p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Total Sales</span>
-            <div className="w-7 h-7 rounded bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-              <ArrowUpRight className="w-3.5 h-3.5" />
+          <StatCard
+            label="Outstanding"
+            value={formatINR(totals.total_pending)}
+            subtext="Balance due from customers"
+            icon={WarningCircle}
+            badgeClasses="bg-amber-500/10 text-amber-300 border border-amber-500/30"
+          />
+          <StatCard
+            label="Recovery Rate"
+            value={`${totals.collection_rate}%`}
+            subtext="Collected ÷ Total Sales"
+            icon={Percent}
+            badgeClasses="bg-zinc-800 text-zinc-300 border border-zinc-700"
+          />
+          <div className="card p-5 flex flex-col justify-between">
+            <div className="flex items-start justify-between">
+              <span className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">
+                Net Profit / Loss
+              </span>
+              <div
+                className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                  !hasPL
+                    ? "bg-zinc-800 text-zinc-400 border border-zinc-700"
+                    : totalPL >= 0
+                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                    : "bg-rose-500/10 text-rose-400 border border-rose-500/30"
+                }`}
+              >
+                {!hasPL ? (
+                  <ChartBar size={20} weight="bold" />
+                ) : totalPL >= 0 ? (
+                  <TrendUp size={20} weight="bold" />
+                ) : (
+                  <TrendDown size={20} weight="bold" />
+                )}
+              </div>
+            </div>
+            <div className="mt-3">
+              <div
+                className={`text-2xl sm:text-3xl font-bold font-mono tracking-tight tabular-nums ${
+                  !hasPL ? "text-zinc-500" : totalPL >= 0 ? "text-emerald-400" : "text-rose-400"
+                }`}
+              >
+                {hasPL
+                  ? `${totalPL >= 0 ? "+" : ""}${formatINR(totalPL)}`
+                  : "—"}
+              </div>
+              <p className="text-sm text-zinc-400 mt-1">
+                {hasPL ? "Revenue minus purchase cost" : "Add purchase prices to track"}
+              </p>
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono text-zinc-100 mt-2">
-            {formatCurrency(totals.total_sales)}
-          </div>
-          <div className="text-[11px] text-zinc-500 mt-1">
-            {totals.total_bills} bills · {totals.total_customers} customers
-          </div>
         </div>
+      )}
 
-        <div className="card p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Collected</span>
-            <div className="w-7 h-7 rounded bg-sky-500/10 text-sky-400 flex items-center justify-center">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <div className="text-2xl font-bold font-mono text-emerald-400 mt-2">
-            {formatCurrency(totals.total_received)}
-          </div>
-          <div className="text-[11px] text-zinc-500 mt-1">
-            Total cash & UPI in-hand
-          </div>
-        </div>
-
-        <div className="card p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Pending Due</span>
-            <div className="w-7 h-7 rounded bg-rose-500/10 text-rose-400 flex items-center justify-center">
-              <AlertCircle className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <div className="text-2xl font-bold font-mono text-amber-400 mt-2">
-            {formatCurrency(totals.total_pending)}
-          </div>
-          <div className="text-[11px] text-zinc-500 mt-1">
-            Outstanding balance due
-          </div>
-        </div>
-
-        <div className="card p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Recovery Rate</span>
-            <div className="w-7 h-7 rounded bg-zinc-800 text-zinc-300 flex items-center justify-center">
-              <Percent className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <div className="text-2xl font-bold font-mono text-zinc-100 mt-2">
-            {totals.collection_rate}%
-          </div>
-          <div className="text-[11px] text-zinc-500 mt-1">
-            Collected / Total Sales
-          </div>
-        </div>
-      </div>
-
-      {/* Tabs & Data Table */}
+      {/* Tabs + Detail Table */}
       <div className="card overflow-hidden">
-        <div className="p-4 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="p-4 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="segmented-nav">
             <button
               type="button"
               onClick={() => setActiveTab("customers")}
-              className={`segmented-item flex items-center gap-1.5 ${activeTab === "customers" ? "active" : ""}`}
+              className={`segmented-item ${activeTab === "customers" ? "active" : ""}`}
             >
-              <Users className="w-3.5 h-3.5" />
+              <Users size={16} weight="bold" />
               <span>By Customer ({customers.length})</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("products")}
-              className={`segmented-item flex items-center gap-1.5 ${activeTab === "products" ? "active" : ""}`}
+              className={`segmented-item ${activeTab === "products" ? "active" : ""}`}
             >
-              <Package className="w-3.5 h-3.5" />
+              <Package size={16} weight="bold" />
               <span>By Product ({products.length})</span>
             </button>
           </div>
 
-          <div className="relative w-full sm:w-64">
-            <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder={`Search ${activeTab === "customers" ? "customer or phone" : "product"}...`}
+          <div className="w-full sm:w-72">
+            <Input
+              placeholder={`Search ${activeTab === "customers" ? "customer or phone" : "product name"}…`}
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value);
                 setCustPage(1);
                 setProdPage(1);
               }}
-              className="input-field pl-9 text-xs"
+              leftIcon={MagnifyingGlass}
             />
           </div>
         </div>
 
-        {/* Tab 1: Customer Table */}
+        {/* Customer Report Tab */}
         {activeTab === "customers" && (
           <div>
-            {filteredCustomers.length === 0 ? (
-              <div className="py-12 text-center text-zinc-500 text-sm">
-                No customer bills found for this date period.
-              </div>
+            {isLoading ? (
+              <TableSkeleton rows={5} cols={6} />
+            ) : filteredCustomers.length === 0 ? (
+              <EmptyState
+                icon={Users}
+                title={`No customer data for ${dateLabel()}`}
+                description={
+                  searchTerm
+                    ? `No customer matched "${searchTerm}" in this date range.`
+                    : `No bills were recorded for the selected period: ${dateLabel()}.`
+                }
+              />
             ) : (
               <>
-                {/* Desktop Table View */}
                 <div className="hidden md:block overflow-x-auto">
-                  <table className="data-table text-xs">
+                  <table className="data-table">
                     <thead>
                       <tr>
-                        <th className="w-10 text-center">#</th>
-                        <th>Customer Name</th>
-                        <th>Phone</th>
-                        <th className="text-center">Bills</th>
-                        <th className="text-right">Total Sale</th>
-                        <th className="text-right">Received</th>
-                        <th className="text-right">Pending</th>
+                        <th>Customer</th>
+                        <th className="text-right">Total Sales</th>
+                        <th className="text-right">Collected</th>
+                        <th className="text-right">Balance Due</th>
+                        <th className="text-right">Profit / Loss</th>
                         <th className="text-center">Status</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedCustomers.map((c, i) => (
-                        <tr key={c.customer_id || i}>
-                          <td className="text-center text-zinc-500 font-mono">
-                            {(custPage - 1) * PAGE_SIZE + i + 1}
-                          </td>
-                          <td className="font-semibold text-zinc-200">{c.customer_name}</td>
-                          <td className="text-zinc-400 font-mono">{c.phone || "—"}</td>
-                          <td className="text-center font-mono text-zinc-300">{c.bills_count}</td>
-                          <td className="text-right font-mono font-medium text-zinc-200">
-                            {formatCurrency(c.total_sale)}
-                          </td>
-                          <td className="text-right font-mono text-emerald-400">
-                            {formatCurrency(c.amount_paid)}
-                          </td>
-                          <td className="text-right font-mono font-semibold">
-                            {c.balance_due > 0 ? (
-                              <span className="text-amber-400">{formatCurrency(c.balance_due)}</span>
-                            ) : (
-                              <span className="text-zinc-500">₹0</span>
-                            )}
-                          </td>
-                          <td className="text-center">
-                            <span
-                              className={
-                                c.payment_status === "paid"
-                                ? "badge-green"
-                                : c.payment_status === "partial"
-                                ? "badge-yellow"
-                                : "badge-red"
-                              }
-                            >
-                              {c.payment_status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {paginatedCustomers.map((c) => {
+                        const pl = c.profit_loss;
+                        const hasCustomerPL = pl !== null && pl !== undefined;
+                        const isProfitable = hasCustomerPL && pl >= 0;
+                        return (
+                          <tr key={c.customer_id} className="min-h-[52px]">
+                            <td>
+                              <span className="font-semibold text-zinc-100 text-base">
+                                {c.customer_name}
+                              </span>
+                              {c.phone && (
+                                <div className="cell-secondary font-mono">{c.phone}</div>
+                              )}
+                            </td>
+                            <td className="cell-money text-base text-zinc-100">
+                              {formatINR(c.total_sales)}
+                            </td>
+                            <td className="cell-money text-base text-emerald-400">
+                              {formatINR(c.total_received)}
+                            </td>
+                            <td className="cell-money text-base">
+                              {c.total_pending > 0 ? (
+                                <span className="text-amber-300 font-bold">
+                                  {formatINR(c.total_pending)}
+                                </span>
+                              ) : (
+                                <span className="text-zinc-500">₹0.00</span>
+                              )}
+                            </td>
+                            <td className="cell-money text-base">
+                              {hasCustomerPL ? (
+                                <span
+                                  className={`font-bold ${isProfitable ? "text-emerald-400" : "text-rose-400"}`}
+                                >
+                                  {isProfitable ? "+" : ""}
+                                  {formatINR(pl)}
+                                </span>
+                              ) : (
+                                <span className="text-zinc-500">—</span>
+                              )}
+                            </td>
+                            <td className="text-center">
+                              {c.total_pending > 0 ? (
+                                <span className="badge-warning">
+                                  <WarningCircle size={14} weight="bold" />
+                                  Due
+                                </span>
+                              ) : (
+                                <span className="badge-success">
+                                  <CheckCircle size={14} weight="bold" />
+                                  Settled
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
-                    <tfoot>
-                      <tr className="border-t border-zinc-700 bg-zinc-950 font-bold text-zinc-200">
-                        <td colSpan={4} className="py-3 px-4 text-right uppercase tracking-wider text-xs">
-                          Grand Total:
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-emerald-400 text-sm">
-                          {formatCurrency(totals.total_sales)}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-zinc-100 text-sm">
-                          {formatCurrency(totals.total_received)}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-amber-400 text-sm">
-                          {formatCurrency(totals.total_pending)}
-                        </td>
-                        <td className="py-3 px-4 text-center text-xs text-zinc-400 font-mono">
-                          {totals.collection_rate}% Recv
-                        </td>
-                      </tr>
-                    </tfoot>
                   </table>
                 </div>
 
-                {/* Mobile Cards List (< md) */}
-                <div className="block md:hidden divide-y divide-zinc-800/80">
-                  {paginatedCustomers.map((c, i) => (
-                    <div key={c.customer_id || i} className="p-4 flex flex-col gap-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs text-zinc-500">
-                            #{(custPage - 1) * PAGE_SIZE + i + 1}
-                          </span>
-                          <span className="font-semibold text-zinc-100 text-sm">{c.customer_name}</span>
+                {/* Mobile customer cards */}
+                <div className="block md:hidden divide-y divide-zinc-800">
+                  {paginatedCustomers.map((c) => {
+                    const pl = c.profit_loss;
+                    const hasCustomerPL = pl !== null && pl !== undefined;
+                    const isProfitable = hasCustomerPL && pl >= 0;
+                    return (
+                      <div key={c.customer_id} className="p-4 flex flex-col gap-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h3 className="font-semibold text-zinc-100 text-base">
+                              {c.customer_name}
+                            </h3>
+                            {c.phone && (
+                              <p className="text-xs text-zinc-400 font-mono">{c.phone}</p>
+                            )}
+                          </div>
+                          {c.total_pending > 0 ? (
+                            <span className="badge-warning text-xs">
+                              <WarningCircle size={12} weight="bold" />
+                              Due
+                            </span>
+                          ) : (
+                            <span className="badge-success text-xs">
+                              <CheckCircle size={12} weight="bold" />
+                              Settled
+                            </span>
+                          )}
                         </div>
-                        <span
-                          className={
-                            c.payment_status === "paid"
-                              ? "badge-green text-[10px]"
-                              : c.payment_status === "partial"
-                              ? "badge-yellow text-[10px]"
-                              : "badge-red text-[10px]"
-                          }
-                        >
-                          {c.payment_status}
-                        </span>
-                      </div>
 
-                      <div className="flex items-center justify-between text-xs text-zinc-400">
-                        <span>{c.phone || "No phone"}</span>
-                        <span>{c.bills_count} bills</span>
+                        <div className="grid grid-cols-2 gap-2 p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-sm">
+                          <div>
+                            <span className="text-xs text-zinc-400 block">Sales</span>
+                            <span className="font-mono font-bold text-zinc-100 mt-0.5 block tabular-nums">
+                              {formatINR(c.total_sales)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-xs text-zinc-400 block">Collected</span>
+                            <span className="font-mono font-bold text-emerald-400 mt-0.5 block tabular-nums">
+                              {formatINR(c.total_received)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-xs text-zinc-400 block">Balance Due</span>
+                            <span
+                              className={`font-mono font-bold mt-0.5 block tabular-nums ${
+                                c.total_pending > 0 ? "text-amber-300" : "text-zinc-500"
+                              }`}
+                            >
+                              {formatINR(c.total_pending)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-xs text-zinc-400 block">Profit / Loss</span>
+                            <span
+                              className={`font-mono font-bold mt-0.5 block tabular-nums ${
+                                !hasCustomerPL
+                                  ? "text-zinc-500"
+                                  : isProfitable
+                                  ? "text-emerald-400"
+                                  : "text-rose-400"
+                              }`}
+                            >
+                              {hasCustomerPL ? (isProfitable ? "+" : "") + formatINR(pl) : "—"}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-
-                      <div className="grid grid-cols-3 gap-2 p-2 rounded bg-zinc-950/70 border border-zinc-800/70 text-xs">
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block">Total Sale</span>
-                          <span className="font-mono font-medium text-zinc-200 mt-0.5 block">
-                            {formatCurrency(c.total_sale)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block">Received</span>
-                          <span className="font-mono text-zinc-400 mt-0.5 block">
-                            {formatCurrency(c.amount_paid)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block">Pending</span>
-                          <span
-                            className={`font-mono font-bold mt-0.5 block ${
-                              c.balance_due > 0 ? "text-amber-400" : "text-zinc-500"
-                            }`}
-                          >
-                            {c.balance_due > 0 ? formatCurrency(c.balance_due) : "₹0"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <Pagination
@@ -470,120 +546,126 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {/* Tab 2: Product Table */}
+        {/* Product Report Tab */}
         {activeTab === "products" && (
           <div>
-            {filteredProducts.length === 0 ? (
-              <div className="py-12 text-center text-zinc-500 text-sm">
-                No products sold in this date period.
-              </div>
+            {isLoading ? (
+              <TableSkeleton rows={5} cols={6} />
+            ) : filteredProducts.length === 0 ? (
+              <EmptyState
+                icon={Package}
+                title={`No product data for ${dateLabel()}`}
+                description={
+                  searchTerm
+                    ? `No product matched "${searchTerm}" in this date range.`
+                    : `No products were sold in the selected period: ${dateLabel()}.`
+                }
+              />
             ) : (
               <>
-                {/* Desktop Table View */}
                 <div className="hidden md:block overflow-x-auto">
-                  <table className="data-table text-xs">
+                  <table className="data-table">
                     <thead>
                       <tr>
-                        <th className="w-10 text-center">#</th>
-                        <th>Product Name</th>
-                        <th className="text-center">Unit</th>
-                        <th className="text-right">Quantity Sold</th>
-                        <th className="text-right">Avg Rate (₹)</th>
-                        <th className="text-right">Total Sale</th>
-                        <th className="text-right">Received</th>
-                        <th className="text-right">Pending</th>
+                        <th>Product</th>
+                        <th className="text-right">Total Quantity</th>
+                        <th className="text-right">Total Sales</th>
+                        <th className="text-right">Purchase Price</th>
+                        <th className="text-right">Profit / Loss</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedProducts.map((p, i) => (
-                        <tr key={p.product_id || i}>
-                          <td className="text-center text-zinc-500 font-mono">
-                            {(prodPage - 1) * PAGE_SIZE + i + 1}
-                          </td>
-                          <td className="font-semibold text-zinc-200">{p.product_name}</td>
-                          <td className="text-center text-zinc-400 font-mono">{p.unit}</td>
-                          <td className="text-right font-mono text-zinc-200">{p.total_qty}</td>
-                          <td className="text-right font-mono text-zinc-400">₹{p.avg_rate?.toFixed(2)}</td>
-                          <td className="text-right font-mono font-medium text-zinc-200">
-                            {formatCurrency(p.total_sale)}
-                          </td>
-                          <td className="text-right font-mono text-emerald-400">
-                            {formatCurrency(p.amount_paid)}
-                          </td>
-                          <td className="text-right font-mono font-semibold">
-                            {p.balance_due > 0 ? (
-                              <span className="text-amber-400">{formatCurrency(p.balance_due)}</span>
-                            ) : (
-                              <span className="text-zinc-500">₹0</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                      {paginatedProducts.map((p) => {
+                        const pl = p.profit_loss;
+                        const hasProdPL = pl !== null && pl !== undefined;
+                        const isProfitable = hasProdPL && pl >= 0;
+                        return (
+                          <tr key={p.product_id || p.product_name} className="min-h-[52px]">
+                            <td className="font-semibold text-zinc-100 text-base">
+                              {p.product_name}
+                            </td>
+                            <td className="cell-money text-base text-zinc-300">
+                              <span className="font-mono">{p.total_quantity}</span>
+                              <span className="text-zinc-400 ml-1 text-sm">{p.unit || "kg"}</span>
+                            </td>
+                            <td className="cell-money text-base text-zinc-100">
+                              {formatINR(p.total_sales)}
+                            </td>
+                            <td className="cell-money text-base">
+                              {p.purchase_price !== null && p.purchase_price !== undefined ? (
+                                <span className="text-rose-300">{formatINR(p.purchase_price)}</span>
+                              ) : (
+                                <span className="text-zinc-500">Not set</span>
+                              )}
+                            </td>
+                            <td className="cell-money text-base">
+                              {hasProdPL ? (
+                                <span
+                                  className={`font-bold ${isProfitable ? "text-emerald-400" : "text-rose-400"}`}
+                                >
+                                  {isProfitable ? "+" : ""}
+                                  {formatINR(pl)}
+                                </span>
+                              ) : (
+                                <span className="text-zinc-500">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
-                    <tfoot>
-                      <tr className="border-t border-zinc-700 bg-zinc-950 font-bold text-zinc-200">
-                        <td colSpan={5} className="py-3 px-4 text-right uppercase tracking-wider text-xs">
-                          Grand Total:
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-emerald-400 text-sm">
-                          {formatCurrency(totals.total_sales)}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-zinc-100 text-sm">
-                          {formatCurrency(totals.total_received)}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-amber-400 text-sm">
-                          {formatCurrency(totals.total_pending)}
-                        </td>
-                      </tr>
-                    </tfoot>
                   </table>
                 </div>
 
-                {/* Mobile Cards List (< md) */}
-                <div className="block md:hidden divide-y divide-zinc-800/80">
-                  {paginatedProducts.map((p, i) => (
-                    <div key={p.product_id || i} className="p-4 flex flex-col gap-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs text-zinc-500">
-                            #{(prodPage - 1) * PAGE_SIZE + i + 1}
-                          </span>
-                          <span className="font-semibold text-zinc-100 text-sm">{p.product_name}</span>
-                        </div>
-                        <span className="badge-zinc text-[10px] font-mono">{p.unit}</span>
-                      </div>
+                {/* Mobile product cards */}
+                <div className="block md:hidden divide-y divide-zinc-800">
+                  {paginatedProducts.map((p) => {
+                    const pl = p.profit_loss;
+                    const hasProdPL = pl !== null && pl !== undefined;
+                    const isProfitable = hasProdPL && pl >= 0;
+                    return (
+                      <div key={p.product_id || p.product_name} className="p-4 flex flex-col gap-3">
+                        <h3 className="font-semibold text-zinc-100 text-base">{p.product_name}</h3>
 
-                      <div className="flex items-center justify-between text-xs text-zinc-400">
-                        <span>Quantity: <strong className="text-zinc-200 font-mono">{p.total_qty} {p.unit}</strong></span>
-                        <span>Avg Rate: <strong className="text-zinc-200 font-mono">₹{p.avg_rate?.toFixed(2)}</strong></span>
+                        <div className="grid grid-cols-2 gap-2 p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-sm">
+                          <div>
+                            <span className="text-xs text-zinc-400 block">Total Sold</span>
+                            <span className="font-mono font-bold text-zinc-100 mt-0.5 block tabular-nums">
+                              {p.total_quantity} {p.unit || "kg"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-xs text-zinc-400 block">Revenue</span>
+                            <span className="font-mono font-bold text-zinc-100 mt-0.5 block tabular-nums">
+                              {formatINR(p.total_sales)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-xs text-zinc-400 block">Purchase Cost</span>
+                            <span className="font-mono font-bold text-rose-300 mt-0.5 block tabular-nums">
+                              {p.purchase_price !== null && p.purchase_price !== undefined
+                                ? formatINR(p.purchase_price)
+                                : "—"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-xs text-zinc-400 block">Profit / Loss</span>
+                            <span
+                              className={`font-mono font-bold mt-0.5 block tabular-nums ${
+                                !hasProdPL
+                                  ? "text-zinc-500"
+                                  : isProfitable
+                                  ? "text-emerald-400"
+                                  : "text-rose-400"
+                              }`}
+                            >
+                              {hasProdPL ? (isProfitable ? "+" : "") + formatINR(pl) : "—"}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-
-                      <div className="grid grid-cols-3 gap-2 p-2 rounded bg-zinc-950/70 border border-zinc-800/70 text-xs">
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block">Total Sale</span>
-                          <span className="font-mono font-medium text-zinc-200 mt-0.5 block">
-                            {formatCurrency(p.total_sale)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block">Received</span>
-                          <span className="font-mono text-zinc-400 mt-0.5 block">
-                            {formatCurrency(p.amount_paid)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block">Pending</span>
-                          <span
-                            className={`font-mono font-bold mt-0.5 block ${
-                              p.balance_due > 0 ? "text-amber-400" : "text-zinc-500"
-                            }`}
-                          >
-                            {p.balance_due > 0 ? formatCurrency(p.balance_due) : "₹0"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <Pagination

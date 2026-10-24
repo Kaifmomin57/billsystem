@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import {
-  Printer, Bluetooth, Cable, HelpCircle, CheckCircle2,
-  RefreshCw, Sparkles, ShieldCheck
-} from "lucide-react";
+  Printer, Bluetooth, Plug, Question, CheckCircle,
+  ArrowsClockwise, Sparkle, ShieldCheck
+} from "@phosphor-icons/react";
+import PageHeader from "../components/ui/PageHeader";
 import PrinterStatus from "../components/PrinterStatus";
 import PrinterControls from "../components/PrinterControls";
 import BillPreview from "../components/BillPreview";
@@ -90,21 +91,10 @@ export default function PrinterPage() {
   return (
     <div className="page-container py-6 space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-              <Printer className="w-5 h-5" />
-            </div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100">
-              Vyapar VYPRTP3001 Print Center
-            </h1>
-          </div>
-          <p className="text-xs sm:text-sm text-zinc-400 mt-1">
-            100% Web-based thermal receipt printing — Direct from your browser to your VYPRTP3001 hardware
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Vyapar VYPRTP3001 Print Center"
+        purpose="100% Web-based thermal receipt printing — Direct from your browser to your VYPRTP3001 hardware"
+      />
 
       {/* 1. Printer Status Widget */}
       <PrinterStatus status={status} onRefresh={handleRefresh} />
@@ -131,7 +121,7 @@ export default function PrinterPage() {
       {/* 4. Quick How-To Guide */}
       <div className="card p-5 border-zinc-800 bg-zinc-900/40">
         <h4 className="text-sm font-semibold text-zinc-200 flex items-center gap-2 mb-3">
-          <HelpCircle className="w-4 h-4 text-emerald-400" />
+          <Question className="w-4 h-4 text-emerald-400" />
           <span>How Direct Browser Printing Works (100% Web-Based)</span>
         </h4>
 

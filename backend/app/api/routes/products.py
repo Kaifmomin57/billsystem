@@ -36,6 +36,7 @@ def create_product(
         name=data.name.strip(),
         unit=data.unit.strip() if data.unit else "pcs",
         product_code=data.product_code.strip() if data.product_code else None,
+        purchase_price=data.purchase_price if data.purchase_price is not None else None,
         is_active=data.is_active
     )
     db.add(product)
@@ -74,6 +75,10 @@ def update_product(
         product.unit = data.unit.strip()
     if data.product_code is not None:
         product.product_code = data.product_code.strip()
+    if data.purchase_price is not None:
+        product.purchase_price = data.purchase_price
+    elif hasattr(data, 'purchase_price') and data.purchase_price == 0:
+        product.purchase_price = None
     if data.is_active is not None:
         product.is_active = data.is_active
     

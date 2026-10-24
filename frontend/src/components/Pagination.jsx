@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { CaretLeft, CaretRight } from "@phosphor-icons/react";
 
 /**
  * Reusable pagination component for all data tables.
@@ -40,7 +40,7 @@ export default function Pagination({
     <div
       className={`flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-zinc-800 ${className}`}
     >
-      <p className="text-xs text-zinc-500">
+      <p className="text-sm text-zinc-400">
         Showing{" "}
         <span className="font-semibold text-zinc-200">{start}</span> to{" "}
         <span className="font-semibold text-zinc-200">{end}</span> of{" "}
@@ -48,14 +48,15 @@ export default function Pagination({
         results
       </p>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1.5" role="navigation" aria-label="Pagination">
         {/* Prev */}
         <button
           onClick={() => onPageChange(page - 1)}
           disabled={page <= 1}
-          className="p-1.5 rounded-lg border border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          aria-label="Previous page"
+          className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg border border-control text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         >
-          <ChevronLeft className="w-4 h-4" />
+          <CaretLeft className="w-4 h-4" />
         </button>
 
         {/* Page numbers */}
@@ -63,10 +64,12 @@ export default function Pagination({
           <button
             key={p}
             onClick={() => onPageChange(p)}
-            className={`min-w-[32px] h-8 rounded-lg text-xs font-medium transition-colors ${
+            aria-label={`Page ${p}`}
+            aria-current={p === page ? "page" : undefined}
+            className={`min-w-[40px] min-h-[40px] rounded-lg text-sm font-medium transition-colors ${
               p === page
-                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 border border-transparent"
+                ? "bg-emerald-600/20 text-emerald-400 border border-emerald-500/30"
+                : "text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 border border-transparent"
             }`}
           >
             {p}
@@ -77,9 +80,10 @@ export default function Pagination({
         <button
           onClick={() => onPageChange(page + 1)}
           disabled={page >= totalPages}
-          className="p-1.5 rounded-lg border border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          aria-label="Next page"
+          className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg border border-control text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         >
-          <ChevronRight className="w-4 h-4" />
+          <CaretRight className="w-4 h-4" />
         </button>
       </div>
     </div>

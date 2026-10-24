@@ -1,13 +1,13 @@
+import { formatINR, formatDateIN, formatDateTimeIN } from './formatters';
+
+export { formatINR, formatDateIN, formatDateTimeIN };
+
 export const formatCurrency = (value, symbol = "₹") => {
-  const num = Number(value ?? 0);
-  return `${symbol}${num.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatINR(value);
 };
 
 export const formatDate = (dateStr) => {
-  if (!dateStr) return "—";
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return formatDateIN(dateStr);
 };
 
 export const formatDateTime = (dateStr) => {

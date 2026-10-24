@@ -15,6 +15,9 @@ def clean_phone_number(phone_raw: Optional[str]) -> Optional[str]:
     cleaned = "".join(ch for ch in str(phone_raw) if ch.isdigit())
     if not cleaned:
         return None
+    # Strip leading zero if 11 digits (e.g. 09730526659 -> 9730526659)
+    if cleaned.startswith("0") and len(cleaned) == 11:
+        cleaned = cleaned[1:]
     # If 10-digit Indian number without country code, prepend 91
     if len(cleaned) == 10:
         cleaned = "91" + cleaned
@@ -101,7 +104,7 @@ def send_via_openwa(
             payload["url"] = pdf_url
 
         try:
-            resp = requests.post(endpoint, json=payload, headers=headers, timeout=30)
+            resp = requests.post(endpoint, json=payload, headers=headers, timeout=(1.5, 5.0))
             if resp.status_code in [200, 201]:
                 return {
                     "success": True,
@@ -113,7 +116,7 @@ def send_via_openwa(
                 logger.warning(f"OpenWA send-document returned HTTP {resp.status_code}: {resp.text}")
                 # Fallback to text send if document format failed
         except Exception as e:
-            logger.error(f"OpenWA document send error: {e}")
+            logger.info(f"OpenWA document send unavailable: {e}")
             return {"success": False, "provider": "openwa", "error": str(e)}
 
     # 2. Text message send endpoint
@@ -123,7 +126,7 @@ def send_via_openwa(
         "text": message
     }
     try:
-        resp = requests.post(text_endpoint, json=text_payload, headers=headers, timeout=20)
+        resp = requests.post(text_endpoint, json=text_payload, headers=headers, timeout=(1.5, 5.0))
         if resp.status_code in [200, 201]:
             return {
                 "success": True,

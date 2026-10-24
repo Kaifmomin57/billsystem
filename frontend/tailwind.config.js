@@ -9,6 +9,28 @@ export default {
         mono: ["Geist Mono", "monospace"],
       },
       colors: {
+        // PRD v2 Semantic Action & Surface Tokens
+        surface: {
+          canvas: "#09090B",
+          raised: "#18181B",
+          input: "#27272A",
+        },
+        action: {
+          primary: "#047857",
+          "primary-hover": "#065F46",
+          text: "#34D399",
+        },
+        border: {
+          default: "#3F3F46",
+          control: "#71717A",
+        },
+        "focus-ring": "#6EE7B7",
+        status: {
+          success: "#34D399",
+          warning: "#FBBF24",
+          danger: "#FB7185",
+          info: "#38BDF8",
+        },
         // Neutral base — Zinc
         zinc: {
           950: "#09090b",
@@ -23,7 +45,7 @@ export default {
           100: "#f4f4f5",
           50:  "#fafafa",
         },
-        // Primary accent — Emerald (matches billing/finance trust)
+        // Primary accent — Emerald
         emerald: {
           950: "#022c22",
           900: "#064e3b",
@@ -52,7 +74,7 @@ export default {
       boxShadow: {
         card: "0 1px 3px 0 rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05)",
         "card-hover": "0 4px 12px 0 rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08)",
-        glow: "0 0 16px rgba(16,185,129,0.3)",
+        glow: "0 0 16px rgba(4,120,87,0.35)",
       },
       animation: {
         "fade-in": "fadeIn 0.2s ease-out",

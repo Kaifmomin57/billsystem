@@ -6,13 +6,16 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 import concurrent.futures
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.config import get_settings
+from app.core.audit import record_audit
+from app.core.signing import generate_signed_url
+from app.services.job_service import create_job, run_async_task, update_job_progress, complete_job, fail_job
 from app.models.models import Upload, UploadStatus, Bill, BillItem, PaymentInstallment, Customer, Product, CustomerAlias, ColumnMapping, CustomerRate, ProductRate, User
 from app.schemas.schemas import UploadDraftUpdate, UploadOut
 from app.services.gemini_service import analyze_image
@@ -200,6 +203,126 @@ async def upload_and_process_bill(
         upload.error_message = str(e)
         db.commit()
         raise HTTPException(status_code=500, detail=f"Gemini AI processing error: {str(e)}")
+
+@router.post("/async", status_code=status.HTTP_202_ACCEPTED)
+async def upload_and_process_async(
+    file: UploadFile = File(...),
+    upload_type: str = Form("ledger"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    PRD Section 7 & Section 3 (#2):
+    Accepts ledger or invoice file, saves image, queues background OCR extraction,
+    and returns 202 Accepted with job_id and pollable status URL.
+    """
+    contents = await file.read()
+    if len(contents) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 25MB)")
+
+    img_hash = hashlib.sha256(contents).hexdigest()
+
+    safe_name = f"{uuid.uuid4()}_{file.filename}"
+    save_path = os.path.join(settings.UPLOAD_DIR, safe_name)
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    with open(save_path, "wb") as f:
+        f.write(contents)
+
+    upload = Upload(
+        upload_type=upload_type,
+        image_path=safe_name,
+        image_hash=img_hash,
+        status="processing"
+    )
+    db.add(upload)
+    db.commit()
+    db.refresh(upload)
+
+    upload_id = upload.id
+    content_type = file.content_type or "image/jpeg"
+
+    job_id = create_job("ocr", {
+        "upload_id": upload_id,
+        "upload_type": upload_type,
+        "filename": safe_name
+    }, user_id=current_user.id)
+
+    record_audit(
+        db=db,
+        action="upload_scan_queued",
+        entity="upload",
+        entity_id=str(upload_id),
+        user_id=current_user.id,
+        username=current_user.username,
+        changes={"filename": file.filename, "upload_type": upload_type, "job_id": job_id}
+    )
+
+    def _ocr_worker(jid: str):
+        from app.core.database import SessionLocal
+        task_db = SessionLocal()
+        try:
+            update_job_progress(jid, 15, "Preprocessing image for optical character recognition…")
+            proc_path = preprocess_image(save_path)
+            with open(proc_path, "rb") as pf:
+                proc_bytes = pf.read()
+
+            update_job_progress(jid, 35, "Uploading to secure cloud storage…")
+            stored_image_path = safe_name
+            try:
+                cld_res = upload_image_to_cloudinary(save_path)
+                if cld_res and cld_res.get("secure_url"):
+                    stored_image_path = cld_res.get("secure_url")
+            except Exception:
+                pass
+
+            update_job_progress(jid, 60, "Running Gemini AI neural extraction…")
+            parsed_json, meta = analyze_image(proc_bytes, content_type, upload_type)
+
+            update_job_progress(jid, 85, "Cross-referencing customer names and base rates…")
+            u_rec = task_db.query(Upload).filter(Upload.id == upload_id).first()
+            if u_rec:
+                u_rec.image_path = stored_image_path
+                if upload_type == "ledger":
+                    enriched = _enrich_draft(parsed_json, task_db)
+                    u_rec.page_date = enriched.get("page_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    u_rec.draft_data = json.dumps(enriched)
+                else:
+                    u_rec.page_date = parsed_json.get("invoice", {}).get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    u_rec.draft_data = json.dumps(parsed_json)
+
+                u_rec.gemini_raw_response = json.dumps({"parsed": parsed_json, "meta": meta})
+                u_rec.status = "needs_review"
+                task_db.commit()
+                task_db.refresh(u_rec)
+
+                image_url = stored_image_path if stored_image_path.startswith("http") else f"/media/{stored_image_path}"
+                complete_job(jid, {
+                    "upload_id": u_rec.id,
+                    "status": "needs_review",
+                    "page_date": u_rec.page_date,
+                    "image_url": image_url,
+                    "draft_data": json.loads(u_rec.draft_data),
+                    "meta": meta
+                }, status="needs_review")
+        except Exception as exc:
+            u_rec = task_db.query(Upload).filter(Upload.id == upload_id).first()
+            if u_rec:
+                u_rec.status = "failed"
+                u_rec.error_message = str(exc)
+                task_db.commit()
+            fail_job(jid, str(exc))
+        finally:
+            task_db.close()
+
+    run_async_task(job_id, _ocr_worker)
+
+    return {
+        "job_id": job_id,
+        "upload_id": upload_id,
+        "status": "queued",
+        "status_url": f"/jobs/{job_id}",
+        "message": "Ledger OCR scan queued. Processing in background."
+    }
 
 @router.get("", response_model=List[Dict[str, Any]])
 def list_uploads(

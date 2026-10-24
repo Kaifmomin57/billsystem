@@ -130,7 +130,7 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
     ws1.title = "Customer Summary"
 
     # Banner
-    ws1.merge_cells("A1:H1")
+    ws1.merge_cells("A1:I1")
     t1 = ws1["A1"]
     t1.value = f"DAILY SALES & PAYMENT REPORT — CUSTOMER SUMMARY   |   {report_date}"
     t1.font = HEADER_FONT; t1.fill = HEADER_FILL; t1.alignment = CENTER
@@ -150,7 +150,7 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
     # Table Header (Row 6)
     headers1 = [
         "#", "Customer Name", "Phone", "Bills Count",
-        "Total Sale (₹)", "Received (₹)", "Pending (₹)", "Payment Status"
+        "Total Sale (₹)", "Received (₹)", "Pending (₹)", "Profit / Loss (₹)", "Payment Status"
     ]
     for ci, h in enumerate(headers1, 1):
         cell = ws1.cell(row=6, column=ci, value=h)
@@ -165,6 +165,7 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
         c_sale = float(c.get("total_sale") or 0)
         c_paid = float(c.get("amount_paid") or 0)
         c_due = float(c.get("balance_due") or 0)
+        pl = c.get("profit_loss")
         status = (c.get("payment_status") or "unpaid").lower()
 
         ws1.cell(row=current_row, column=1, value=idx).alignment = CENTER
@@ -181,7 +182,14 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
         dc = ws1.cell(row=current_row, column=7, value=c_due)
         dc.number_format = NUM_FMT; dc.alignment = RIGHT; dc.font = Font(name="Segoe UI", size=9, bold=True, color="991B1B")
 
-        st_cell = ws1.cell(row=current_row, column=8, value=status.upper())
+        plc = ws1.cell(row=current_row, column=8, value=pl if pl is not None else "—")
+        if pl is not None:
+            plc.number_format = NUM_FMT; plc.alignment = RIGHT
+            plc.font = Font(name="Segoe UI", size=9, bold=True, color="166534" if pl >= 0 else "991B1B")
+        else:
+            plc.alignment = CENTER; plc.font = BODY_FONT
+
+        st_cell = ws1.cell(row=current_row, column=9, value=status.upper())
         st_cell.alignment = CENTER
         if status == "paid":
             st_cell.fill = PAID_FILL; st_cell.font = PAID_FONT
@@ -190,10 +198,10 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
         else:
             st_cell.fill = UNPAID_FILL; st_cell.font = UNPAID_FONT
 
-        for ci in range(1, 9):
+        for ci in range(1, 10):
             cell = ws1.cell(row=current_row, column=ci)
             cell.border = CELL_BORDER
-            if ci != 8:
+            if ci != 9:
                 cell.fill = fill
                 if ci < 5:
                     cell.font = BODY_FONT
@@ -213,13 +221,22 @@ def build_daily_by_customer(report_data: Union[Dict[str, Any], List[Dict]], repo
         cell.number_format = NUM_FMT; cell.alignment = RIGHT
         cell.border = CELL_BORDER
 
-    st_total = ws1.cell(row=current_row, column=8, value=f"{collection_rate:.1f}% Recv")
+    has_c_pl = any(c.get("profit_loss") is not None for c in customers)
+    grand_c_pl = sum(c["profit_loss"] for c in customers if c.get("profit_loss") is not None)
+    pl_total = ws1.cell(row=current_row, column=8, value=grand_c_pl if has_c_pl else "—")
+    pl_total.font = TOTAL_FONT; pl_total.fill = TOTAL_FILL; pl_total.border = CELL_BORDER
+    if has_c_pl:
+        pl_total.number_format = NUM_FMT; pl_total.alignment = RIGHT
+    else:
+        pl_total.alignment = CENTER
+
+    st_total = ws1.cell(row=current_row, column=9, value=f"{collection_rate:.1f}% Recv")
     st_total.font = TOTAL_FONT; st_total.fill = TOTAL_FILL
     st_total.alignment = CENTER; st_total.border = CELL_BORDER
     ws1.row_dimensions[current_row].height = 24
 
     # Column Widths for Sheet 1
-    w1 = [6, 28, 16, 14, 18, 18, 18, 16]
+    w1 = [6, 28, 16, 14, 18, 18, 18, 18, 16]
     for ci, w in enumerate(w1, 1):
         ws1.column_dimensions[get_column_letter(ci)].width = w
 
@@ -402,7 +419,7 @@ def build_daily_by_product(report_data: Union[Dict[str, Any], List[Dict]], repor
     collection_rate = (grand_received / grand_sale * 100) if grand_sale > 0 else 0.0
 
     # Banner
-    ws.merge_cells("A1:I1")
+    ws.merge_cells("A1:K1")
     c = ws["A1"]
     c.value = f"DAILY SALES & PRODUCT REPORT   |   {report_date}"
     c.font = HEADER_FONT; c.fill = HEADER_FILL; c.alignment = CENTER
@@ -421,8 +438,8 @@ def build_daily_by_product(report_data: Union[Dict[str, Any], List[Dict]], repor
 
     # Column Headers (Row 6)
     headers = [
-        "#", "Product Name", "Unit", "Qty Sold", "Avg Rate (₹)",
-        "Total Sale (₹)", "Received (₹)", "Pending (₹)", "Share %"
+        "#", "Product Name", "Unit", "Qty Sold", "Purchase Price (₹)", "Avg Sell Rate (₹)",
+        "Total Sale (₹)", "Received (₹)", "Pending (₹)", "Profit / Loss (₹)", "Share %"
     ]
     for ci, h in enumerate(headers, 1):
         cell = ws.cell(row=6, column=ci, value=h)
@@ -438,7 +455,9 @@ def build_daily_by_product(report_data: Union[Dict[str, Any], List[Dict]], repor
         received = float(p.get("amount_paid") or 0)
         pending = float(p.get("balance_due") or 0)
         qty = float(p.get("total_qty") or p.get("quantity") or 0)
+        pp = p.get("purchase_price")
         avg_rate = float(p.get("avg_rate") or (sale / qty if qty > 0 else 0))
+        pl = p.get("profit_loss")
         share = (sale / grand_sale * 100) if grand_sale > 0 else 0.0
 
         ws.cell(row=current_row, column=1, value=idx).alignment = CENTER
@@ -448,29 +467,43 @@ def build_daily_by_product(report_data: Union[Dict[str, Any], List[Dict]], repor
         qc = ws.cell(row=current_row, column=4, value=qty)
         qc.number_format = NUM_FMT; qc.alignment = RIGHT
 
-        rc = ws.cell(row=current_row, column=5, value=avg_rate)
+        ppc = ws.cell(row=current_row, column=5, value=float(pp) if pp is not None else "—")
+        if pp is not None:
+            ppc.number_format = NUM_FMT; ppc.alignment = RIGHT
+            ppc.font = Font(name="Segoe UI", size=9, color="E11D48")
+        else:
+            ppc.alignment = CENTER
+
+        rc = ws.cell(row=current_row, column=6, value=avg_rate)
         rc.number_format = NUM_FMT; rc.alignment = RIGHT
 
-        sc = ws.cell(row=current_row, column=6, value=sale)
+        sc = ws.cell(row=current_row, column=7, value=sale)
         sc.number_format = NUM_FMT; sc.alignment = RIGHT
         sc.font = Font(name="Segoe UI", size=9, bold=True, color="166534")
 
-        pc = ws.cell(row=current_row, column=7, value=received)
+        pc = ws.cell(row=current_row, column=8, value=received)
         pc.number_format = NUM_FMT; pc.alignment = RIGHT
         pc.font = Font(name="Segoe UI", size=9, bold=True, color="1E40AF")
 
-        dc = ws.cell(row=current_row, column=8, value=pending)
+        dc = ws.cell(row=current_row, column=9, value=pending)
         dc.number_format = NUM_FMT; dc.alignment = RIGHT
         dc.font = Font(name="Segoe UI", size=9, bold=True, color="991B1B")
 
-        shc = ws.cell(row=current_row, column=9, value=f"{share:.1f}%")
+        plc = ws.cell(row=current_row, column=10, value=float(pl) if pl is not None else "—")
+        if pl is not None:
+            plc.number_format = NUM_FMT; plc.alignment = RIGHT
+            plc.font = Font(name="Segoe UI", size=9, bold=True, color="166534" if pl >= 0 else "991B1B")
+        else:
+            plc.alignment = CENTER
+
+        shc = ws.cell(row=current_row, column=11, value=f"{share:.1f}%")
         shc.alignment = CENTER
 
-        for ci in range(1, 10):
+        for ci in range(1, 12):
             cell = ws.cell(row=current_row, column=ci)
             cell.border = CELL_BORDER
             cell.fill = fill
-            if ci not in [6, 7, 8]:
+            if ci not in [5, 7, 8, 9, 10]:
                 cell.font = BODY_FONT
 
         ws.row_dimensions[current_row].height = 20
@@ -486,24 +519,35 @@ def build_daily_by_product(report_data: Union[Dict[str, Any], List[Dict]], repor
     t_q = ws.cell(row=current_row, column=4, value=grand_qty)
     t_q.font = TOTAL_FONT; t_q.fill = TOTAL_FILL; t_q.number_format = NUM_FMT; t_q.alignment = RIGHT; t_q.border = CELL_BORDER
 
-    # Empty Avg Rate
-    e_r = ws.cell(row=current_row, column=5, value="")
-    e_r.fill = TOTAL_FILL; e_r.border = CELL_BORDER
+    # Empty Purchase Price and Avg Rate
+    for ci in [5, 6]:
+        e_c = ws.cell(row=current_row, column=ci, value="")
+        e_c.fill = TOTAL_FILL; e_c.border = CELL_BORDER
 
     # Totals for Sale, Received, Pending
-    for ci, val in enumerate([grand_sale, grand_received, grand_pending], start=6):
+    for ci, val in enumerate([grand_sale, grand_received, grand_pending], start=7):
         cell = ws.cell(row=current_row, column=ci, value=val)
         cell.font = TOTAL_FONT; cell.fill = TOTAL_FILL
         cell.number_format = NUM_FMT; cell.alignment = RIGHT
         cell.border = CELL_BORDER
 
+    # Total Profit / Loss
+    has_p_pl = any(p.get("profit_loss") is not None for p in products)
+    grand_p_pl = sum(p["profit_loss"] for p in products if p.get("profit_loss") is not None)
+    pl_cell = ws.cell(row=current_row, column=10, value=grand_p_pl if has_p_pl else "—")
+    pl_cell.font = TOTAL_FONT; pl_cell.fill = TOTAL_FILL; pl_cell.border = CELL_BORDER
+    if has_p_pl:
+        pl_cell.number_format = NUM_FMT; pl_cell.alignment = RIGHT
+    else:
+        pl_cell.alignment = CENTER
+
     # Total Share (100.0%)
-    sh_tot = ws.cell(row=current_row, column=9, value="100.0%")
+    sh_tot = ws.cell(row=current_row, column=11, value="100.0%")
     sh_tot.font = TOTAL_FONT; sh_tot.fill = TOTAL_FILL; sh_tot.alignment = CENTER; sh_tot.border = CELL_BORDER
 
     ws.row_dimensions[current_row].height = 24
 
-    widths = [6, 26, 10, 14, 14, 18, 18, 18, 12]
+    widths = [6, 26, 10, 14, 18, 16, 18, 18, 18, 18, 12]
     for ci, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
 

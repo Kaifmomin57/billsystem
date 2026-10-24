@@ -156,6 +156,21 @@ def list_customer_rates(
         ))
     return results
 
+@router.get("/customer/{customer_id}")
+def get_customer_rates_dict(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    cust_rates = db.query(CustomerRate).filter(CustomerRate.customer_id == customer_id).all()
+    rates_dict = {}
+    for cr in cust_rates:
+        rates_dict[cr.product_id] = {
+            "rate": float(cr.rate),
+            "live_rate": float(cr.live_rate) if cr.live_rate is not None else None
+        }
+    return {"customer_id": customer_id, "rates": rates_dict}
+
 @router.post("/customers", response_model=CustomerRateOut)
 def set_customer_rate(
     data: CustomerRateCreate,

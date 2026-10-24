@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { formatBillAsText } from "../printer/escpos";
-import { Copy, Check, Printer, Edit3, Eye, ZoomIn, ZoomOut } from "lucide-react";
+import { Copy, Check, Printer, Code, Eye, MagnifyingGlassPlus, MagnifyingGlassMinus } from "@phosphor-icons/react";
 import toast from "react-hot-toast";
 
 const FONT_SIZES = [
@@ -45,22 +45,24 @@ export default function BillPreview({ billData, onPrint, isPrinting }) {
                 type="button"
                 onClick={() => setFontSizeIndex((i) => Math.max(0, i - 1))}
                 disabled={fontSizeIndex === 0}
-                className="p-1 text-zinc-400 hover:text-zinc-200 disabled:opacity-30"
+                className="p-1.5 text-zinc-400 hover:text-zinc-200 disabled:opacity-30 rounded hover:bg-zinc-800"
                 title="Decrease Text Size"
+                aria-label="Decrease text size"
               >
-                <ZoomOut className="w-3.5 h-3.5" />
+                <MagnifyingGlassMinus className="w-4 h-4" />
               </button>
-              <span className="text-[11px] font-mono text-zinc-300 px-1 font-medium">
+              <span className="text-xs font-mono text-zinc-300 px-1 font-medium">
                 {currentFontSize.label}
               </span>
               <button
                 type="button"
                 onClick={() => setFontSizeIndex((i) => Math.min(FONT_SIZES.length - 1, i + 1))}
                 disabled={fontSizeIndex === FONT_SIZES.length - 1}
-                className="p-1 text-zinc-400 hover:text-zinc-200 disabled:opacity-30"
+                className="p-1.5 text-zinc-400 hover:text-zinc-200 disabled:opacity-30 rounded hover:bg-zinc-800"
                 title="Increase Text Size"
+                aria-label="Increase text size"
               >
-                <ZoomIn className="w-3.5 h-3.5" />
+                <MagnifyingGlassPlus className="w-4 h-4" />
               </button>
             </div>
           )}
@@ -70,7 +72,7 @@ export default function BillPreview({ billData, onPrint, isPrinting }) {
             <button
               type="button"
               onClick={() => setActiveTab("thermal")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
                 activeTab === "thermal"
                   ? "bg-zinc-800 text-zinc-100 shadow-sm"
                   : "text-zinc-400 hover:text-zinc-200"
@@ -82,13 +84,13 @@ export default function BillPreview({ billData, onPrint, isPrinting }) {
             <button
               type="button"
               onClick={() => setActiveTab("json")}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
                 activeTab === "json"
                   ? "bg-zinc-800 text-zinc-100 shadow-sm"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
             >
-              <Edit3 className="w-3.5 h-3.5" />
+              <Code className="w-3.5 h-3.5" />
               <span>Print Job JSON</span>
             </button>
           </div>

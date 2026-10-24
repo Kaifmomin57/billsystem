@@ -37,10 +37,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 
 from dataclasses import dataclass
+from app.core.database import SessionLocal
+from app.models.models import User
 
 @dataclass
 class CurrentUser:
     username: str
+    id: Optional[int] = None
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
@@ -56,4 +59,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    return CurrentUser(username=username)
+
+    user_id = None
+    try:
+        db = SessionLocal()
+        u = db.query(User).filter(User.username == username).first()
+        if u:
+            user_id = u.id
+        db.close()
+    except Exception:
+        pass
+
+    return CurrentUser(username=username, id=user_id)

@@ -30,12 +30,13 @@ class Customer(Base):
 
 class Product(Base):
     __tablename__ = "products"
-    id        = Column(Integer, primary_key=True, index=True)
-    name      = Column(String(255), unique=True, nullable=False, index=True)
-    unit      = Column(String(50), default="pcs")
-    product_code = Column(String(50))
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id             = Column(Integer, primary_key=True, index=True)
+    name           = Column(String(255), unique=True, nullable=False, index=True)
+    unit           = Column(String(50), default="pcs")
+    product_code   = Column(String(50))
+    purchase_price = Column(Numeric(12, 2), nullable=True)  # Cost/purchase price for P&L calculation
+    is_active      = Column(Boolean, default=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
 
 
 class ProductRate(Base):
@@ -167,3 +168,48 @@ class TagDictionary(Base):
     id      = Column(Integer, primary_key=True, index=True)
     tag     = Column(String(20), unique=True)
     meaning = Column(String(255))
+
+
+class IdempotencyRecord(Base):
+    """Stores client idempotency keys and cached responses to prevent duplicate financial writes (PRD Section 6)."""
+    __tablename__ = "idempotency_keys"
+    key              = Column(String(255), primary_key=True, index=True)
+    user_id          = Column(Integer, nullable=True, index=True)
+    route            = Column(String(255), nullable=False)
+    request_hash     = Column(String(64), nullable=False)
+    status_code      = Column(Integer, nullable=False)
+    response_headers = Column(Text, nullable=True)  # JSON-encoded headers
+    response_body    = Column(Text, nullable=False)  # JSON-encoded response
+    created_at       = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class BackgroundJob(Base):
+    """Durable background jobs for slow work: OCR scans, PDFs, exports, bulk WhatsApp (PRD Section 7)."""
+    __tablename__ = "background_jobs"
+    id               = Column(String(36), primary_key=True, index=True)  # UUID
+    user_id          = Column(Integer, nullable=True, index=True)
+    job_type         = Column(String(50), nullable=False, index=True)    # ocr | pdf | excel_report | bulk_whatsapp
+    status           = Column(String(30), default="queued", index=True)  # queued | processing | needs_review | ready | completed | failed
+    progress         = Column(Integer, default=0)                        # 0 to 100
+    progress_message = Column(String(255), nullable=True)                # Plain language progress
+    payload          = Column(Text, nullable=True)                       # JSON request parameters
+    result           = Column(Text, nullable=True)                       # JSON output (draft data, file URL, stats)
+    error_message    = Column(Text, nullable=True)                       # Safe error summary
+    attempts         = Column(Integer, default=0)
+    created_at       = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at       = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at     = Column(DateTime, nullable=True)
+
+
+class AuditLog(Base):
+    """Immutable audit trail for financial actions, edits, and deletions (PRD Section 9)."""
+    __tablename__ = "audit_logs"
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, nullable=True, index=True)
+    action      = Column(String(50), nullable=False, index=True)  # create_bill | record_payment | delete_bill | edit_bill | setting_change
+    entity_type = Column(String(50), nullable=False, index=True)  # bill | payment | customer | rate | setting
+    entity_id   = Column(String(50), nullable=True, index=True)
+    changes     = Column(Text, nullable=True)                     # JSON delta/details
+    request_id  = Column(String(50), nullable=True, index=True)
+    ip_address  = Column(String(50), nullable=True)
+    created_at  = Column(DateTime, default=datetime.utcnow, index=True)

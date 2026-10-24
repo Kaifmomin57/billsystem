@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import {
-  Plug, Unplug, Printer, FileText, Settings2,
-  RefreshCw, Bluetooth, Cable
-} from "lucide-react";
+  Plug, Power, Printer, FileText, Gear,
+  ArrowsClockwise, Bluetooth, Usb
+} from "@phosphor-icons/react";
 import { PRINTER_MODES } from "../printer/printerService";
 import { getCustomBleConfig, saveCustomBleConfig } from "../printer/bluetooth";
 
@@ -64,7 +64,7 @@ export default function PrinterControls({
                   : "btn-secondary text-zinc-400"
               }`}
             >
-              <Cable className="w-3.5 h-3.5" />
+              <Usb className="w-3.5 h-3.5" />
               <span>Web Serial (USB/OTG)</span>
             </button>
 
@@ -73,8 +73,9 @@ export default function PrinterControls({
               onClick={() => setIsConfigOpen(!isConfigOpen)}
               className="btn btn-secondary btn-sm p-2 text-zinc-400 hover:text-zinc-200"
               title="Printer & BLE UUID Settings"
+              aria-label="Printer configuration settings"
             >
-              <Settings2 className="w-4 h-4" />
+              <Gear className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -87,10 +88,10 @@ export default function PrinterControls({
               type="button"
               onClick={onConnect}
               disabled={isConnecting || isPrinting}
-              className="btn btn-primary min-h-11 shadow-sm flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500"
+              className="btn btn-primary min-h-[44px] shadow-sm flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-800"
             >
               {isConnecting ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
+                <ArrowsClockwise className="w-4 h-4 animate-spin" />
               ) : (
                 <Plug className="w-4 h-4" />
               )}
@@ -102,9 +103,9 @@ export default function PrinterControls({
               type="button"
               onClick={onDisconnect}
               disabled={isPrinting}
-              className="btn min-h-11 bg-rose-600/20 text-rose-300 border border-rose-500/40 hover:bg-rose-600/30 flex items-center justify-center gap-2"
+              className="btn min-h-[44px] bg-rose-600/20 text-rose-300 border border-rose-500/40 hover:bg-rose-600/30 flex items-center justify-center gap-2"
             >
-              <Unplug className="w-4 h-4" />
+              <Power className="w-4 h-4" />
               <span>Disconnect Printer</span>
             </button>
           )}
@@ -114,7 +115,7 @@ export default function PrinterControls({
             type="button"
             onClick={onTestPrint}
             disabled={!isConnected || isPrinting}
-            className="btn btn-secondary min-h-11 flex items-center justify-center gap-2 border-zinc-700"
+            className="btn btn-secondary min-h-[44px] flex items-center justify-center gap-2 border-control"
             title={!isConnected ? "Connect printer first to run test print" : "Run 80mm hardware test print"}
           >
             <Printer className="w-4 h-4 text-emerald-400" />
@@ -126,7 +127,7 @@ export default function PrinterControls({
             type="button"
             onClick={onPrintBill}
             disabled={!isConnected || isPrinting}
-            className="btn min-h-11 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold flex items-center justify-center gap-2 shadow-sm disabled:opacity-40"
+            className="btn min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white font-semibold flex items-center justify-center gap-2 shadow-sm disabled:opacity-40"
             title={!isConnected ? "Connect printer first to print bill" : "Send custom bill ESC/POS to VYPRTP3001"}
           >
             <FileText className="w-4 h-4" />
@@ -138,9 +139,9 @@ export default function PrinterControls({
             type="button"
             onClick={onRefresh}
             disabled={isConnecting || isPrinting}
-            className="btn btn-secondary min-h-11 flex items-center justify-center gap-2"
+            className="btn btn-secondary min-h-[44px] flex items-center justify-center gap-2 border-control"
           >
-            <RefreshCw className="w-4 h-4 text-zinc-400" />
+            <ArrowsClockwise className="w-4 h-4 text-zinc-400" />
             <span>Scan / Refresh</span>
           </button>
         </div>

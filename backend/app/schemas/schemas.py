@@ -60,6 +60,7 @@ class ProductBase(BaseModel):
     name: str
     unit: str = "kg"
     product_code: Optional[str] = None
+    purchase_price: Optional[float] = None  # Cost/purchase price for P&L
     is_active: bool = True
 
 class ProductCreate(ProductBase):
@@ -69,6 +70,7 @@ class ProductUpdate(BaseModel):
     name: Optional[str] = None
     unit: Optional[str] = None
     product_code: Optional[str] = None
+    purchase_price: Optional[float] = None
     is_active: Optional[bool] = None
 
 class ProductOut(ProductBase):

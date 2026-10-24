@@ -1,56 +1,93 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
-  FileText, Plus, Search, Calendar, Trash2, Eye,
-  X, Wallet, CheckCircle2, Clock, AlertCircle, QrCode, Banknote,
-  FileDown, Send, Pencil, PenSquare, SlidersHorizontal, ChevronDown, ChevronUp, Printer
-} from "lucide-react";
+  Receipt,
+  Plus,
+  MagnifyingGlass,
+  CalendarBlank,
+  Trash,
+  Eye,
+  X,
+  Wallet,
+  CheckCircle,
+  Clock,
+  WarningCircle,
+  QrCode,
+  Money,
+  FilePdf,
+  PaperPlaneTilt,
+  PencilSimple,
+  SlidersHorizontal,
+  Printer,
+  ArrowsClockwise,
+  ArrowRight,
+  User,
+  WhatsappLogo,
+} from "@phosphor-icons/react";
 import toast from "react-hot-toast";
 import api from "../lib/api";
-import { formatCurrency, formatDate } from "../lib/utils";
+import { formatINR, formatDateIN } from "../lib/formatters";
 import { printerService } from "../printer/printerService";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Button } from "../components/ui/Button";
+import { Input, Select } from "../components/ui/Input";
+import { FormField } from "../components/ui/FormField";
+import { StatusBadge } from "../components/ui/StatusBadge";
+import { MoreActions } from "../components/ui/MoreActions";
+import { Modal } from "../components/ui/Modal";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { TableSkeleton } from "../components/ui/Skeleton";
+import { EmptyState } from "../components/ui/EmptyState";
 import Pagination from "../components/Pagination";
 
 const PAGE_SIZE = 20;
 
 export default function BillsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState("");
-  const [isThermalPrinting, setIsThermalPrinting] = useState(false);
-  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+
+  const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [selectedCustomerId, setSelectedCustomerId] = useState(searchParams.get("customer_id") || "");
   const [selectedSource, setSelectedSource] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState(""); // "" | "due" | "paid" | "partial" | "unpaid"
+  const [selectedStatus, setSelectedStatus] = useState(searchParams.get("status") || ""); // "" | "due" | "paid" | "partial"
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [page, setPage] = useState(1);
 
-  // Modals
-  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
-  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
-  const [isEditBillModalOpen, setIsEditBillModalOpen] = useState(false);
-  const [viewingBill, setViewingBill] = useState(null);
-  const [sendingBillId, setSendingBillId] = useState(null);
-  const [editingBill, setEditingBill] = useState(null);
+  // Thermal printing status
+  const [isThermalPrinting, setIsThermalPrinting] = useState(false);
 
-  // Payment Modal state
+  // Modals
+  const [isManualModalOpen, setIsManualModalOpen] = useState(searchParams.get("new") === "true");
+  const [isEditBillModalOpen, setIsEditBillModalOpen] = useState(false);
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [selectedBulkBillIds, setSelectedBulkBillIds] = useState([]);
+  const [isBulkSending, setIsBulkSending] = useState(false);
+  const [viewingBill, setViewingBill] = useState(null);
   const [paymentBill, setPaymentBill] = useState(null);
+  const [billToDelete, setBillToDelete] = useState(null);
+  const [editingBill, setEditingBill] = useState(null);
+  const [sendingBillId, setSendingBillId] = useState(null);
+
+  // Payment Form state
   const [paymentForm, setPaymentForm] = useState({
     installment_amount: "",
     payment_method: "Cash",
-    note: ""
+    note: "",
   });
 
-  // Manual Bill Form
+  // Manual Bill Form state
   const [productRows, setProductRows] = useState([]);
   const [billMeta, setBillMeta] = useState({
-    customer_id: "",
+    customer_id: searchParams.get("customer_id") || "",
     bill_date: new Date().toISOString().split("T")[0],
     amount_paid: "",
     payment_method: "Cash",
   });
 
-  // Edit Bill Form
+  // Edit Bill Form state
   const [editProductRows, setEditProductRows] = useState([]);
   const [editBillMeta, setEditBillMeta] = useState({
     customer_id: "",
@@ -59,22 +96,48 @@ export default function BillsPage() {
   });
   const [ratesLoading, setRatesLoading] = useState(false);
 
-  // Fetch Customers & Products
+  // Fetch Customers, Products & Base Rates
   const { data: customers = [] } = useQuery({
     queryKey: ["customers"],
     queryFn: async () => (await api.get("/customers")).data,
-    staleTime: 5 * 60_000,  // customers rarely change — 5min cache
+    staleTime: 5 * 60_000,
   });
 
   const { data: products = [] } = useQuery({
     queryKey: ["products", "active"],
     queryFn: async () => (await api.get("/products?is_active=true")).data,
-    staleTime: 5 * 60_000,  // products rarely change — 5min cache
+    staleTime: 5 * 60_000,
   });
 
-  // Fetch Bills in chunks from backend with server-side pagination & filtering
-  const { data: billsData, isLoading } = useQuery({
-    queryKey: ["bills", page, selectedCustomerId, selectedSource, selectedStatus, startDate, endDate, search],
+  const { data: baseRates = [] } = useQuery({
+    queryKey: ["rates", "products"],
+    queryFn: async () => (await api.get("/rates/products")).data,
+    staleTime: 60_000,
+  });
+
+  const baseRateMap = useMemo(() => {
+    const map = {};
+    for (const br of baseRates) {
+      map[br.product_id] = {
+        rate: br.rate,
+        live_rate: br.live_rate !== null && br.live_rate !== undefined ? br.live_rate : br.rate,
+      };
+    }
+    return map;
+  }, [baseRates]);
+
+  // Fetch Bills with Server Pagination & Filtering
+  const { data: billsData, isLoading, refetch, isFetching } = useQuery({
+    queryKey: [
+      "bills",
+      page,
+      selectedCustomerId,
+      selectedSource,
+      selectedStatus,
+      startDate,
+      endDate,
+      search,
+    ],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append("page", page);
@@ -96,64 +159,45 @@ export default function BillsPage() {
   const totalPages = billsData?.total_pages ?? Math.max(1, Math.ceil(totalBills / PAGE_SIZE));
   const paidCount = billsData?.paid_count ?? 0;
   const dueCount = billsData?.due_count ?? 0;
+  const partialCount = billsData?.partial_count ?? 0;
 
-  // Delete Mutation
-  const deleteMutation = useMutation({
-    mutationFn: (id) => api.delete(`/bills/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-      toast.success("Bill deleted successfully");
-    },
-  });
+  // Initialize product rows on modal open or when products/baseRates load
+  useEffect(() => {
+    if (products.length > 0 && (productRows.length === 0 || productRows.length !== products.length)) {
+      setProductRows(
+        products.map((p) => {
+          const bInfo = baseRateMap[p.id];
+          const rate = bInfo?.rate ?? 0;
+          const live_rate = bInfo?.live_rate ?? rate ?? "";
+          return {
+            product_id: p.id,
+            name: p.name,
+            unit: p.unit || "kg",
+            rate,
+            quantity: "",
+            live_rate,
+            live_quantity: "",
+          };
+        })
+      );
+    }
+  }, [products, baseRateMap, productRows.length]);
 
-  // Create Bill Mutation
-  const createMutation = useMutation({
-    mutationFn: (payload) => api.post("/bills", payload),
-    onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-      toast.success("Bill created! Printing receipt...");
-      setIsManualModalOpen(false);
-      // Auto-print thermal receipt after bill creation
-      if (res?.data) {
-        handleThermalPrint(res.data);
-      }
-    },
-    onError: (err) => {
-      toast.error(err.response?.data?.detail || "Failed to create bill");
-    },
-  });
+  // Handle thermal printing helper
+  const handleThermalPrint = async (bill) => {
+    try {
+      setIsThermalPrinting(true);
+      toast.loading(`Printing receipt #${bill.bill_no}...`, { id: `thermal-${bill.id}` });
+      await printerService.printBill(bill);
+      toast.success(`Receipt printed for #${bill.bill_no}`, { id: `thermal-${bill.id}` });
+    } catch (err) {
+      toast.error(`Printer error: ${err.message || "Failed to print"}`, { id: `thermal-${bill.id}` });
+    } finally {
+      setIsThermalPrinting(false);
+    }
+  };
 
-  // Update Bill Mutation
-  const updateBillMutation = useMutation({
-    mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}`, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-      toast.success("Bill updated successfully!");
-      setIsEditBillModalOpen(false);
-      setEditingBill(null);
-    },
-    onError: (err) => {
-      toast.error(err.response?.data?.detail || "Failed to update bill");
-    },
-  });
-
-  // Payment Record Mutation
-  const paymentMutation = useMutation({
-    mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}/payment`, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-      toast.success("Payment recorded successfully!");
-      setPaymentBill(null);
-    },
-    onError: (err) => {
-      toast.error(err.response?.data?.detail || "Failed to record payment");
-    },
-  });
-
+  // PDF Download helper
   const downloadBillPdf = async (bill) => {
     let url = null;
     try {
@@ -163,7 +207,10 @@ export default function BillsPage() {
       url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `Invoice_${bill.bill_no || bill.id}_Rs${Math.round(bill.total_amount || 0)}.pdf`);
+      link.setAttribute(
+        "download",
+        `Invoice_${bill.bill_no || bill.id}_Rs${Math.round(bill.total_amount || 0)}.pdf`
+      );
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -171,231 +218,245 @@ export default function BillsPage() {
     } catch {
       toast.error("Failed to download PDF invoice", { id: `pdf-toast-${bill.id}` });
     } finally {
-      if (url) {
-        window.URL.revokeObjectURL(url);
-      }
+      if (url) window.URL.revokeObjectURL(url);
     }
   };
 
+  // WhatsApp Dispatch
   const sendInvoiceWhatsApp = async (bill) => {
-    setSendingBillId(bill.id);
     try {
-      toast.loading(`Sending Bill #${bill.bill_no} via WhatsApp...`, { id: `wa-toast-${bill.id}` });
-      const res = await api.post(`/bills/${bill.id}/send-whatsapp`);
-      if (res.data?.success && res.data?.provider === "openwa") {
-        toast.success(`Invoice #${bill.bill_no} sent to ${bill.customer_name}!`, { id: `wa-toast-${bill.id}` });
-        return;
-      }
+      setSendingBillId(bill.id);
+      toast.loading(`Sending invoice #${bill.bill_no} via WhatsApp...`, { id: `wa-${bill.id}` });
+      const res = await api.post(`/bills/${bill.id}/whatsapp`);
       if (res.data?.whatsapp_url) {
         window.open(res.data.whatsapp_url, "_blank");
-        toast.success(`WhatsApp opened for #${bill.bill_no}!`, { id: `wa-toast-${bill.id}` });
-        return;
+        toast.success(`WhatsApp opened for #${bill.bill_no}`, { id: `wa-${bill.id}` });
+      } else {
+        toast.success(`Invoice sent to customer WhatsApp!`, { id: `wa-${bill.id}` });
       }
-      toast.success(`Invoice #${bill.bill_no} dispatched!`, { id: `wa-toast-${bill.id}` });
-    } catch {
-      const msg = `🧾 *INVOICE: #${bill.bill_no}*\n👤 *Customer:* ${bill.customer_name}\n📅 *Date:* ${bill.bill_date}\n💰 *Total:* ₹${bill.total_amount}\n✅ *Paid:* ₹${bill.amount_paid}\n⏳ *Balance:* ₹${bill.balance_due}`;
-      const cleanPhone = (bill.customer_phone || "").replace(/[^0-9]/g, "");
-      const waUrl = cleanPhone ? `https://wa.me/${cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
-      window.open(waUrl, "_blank");
-      toast.dismiss(`wa-toast-${bill.id}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Could not dispatch WhatsApp message", {
+        id: `wa-${bill.id}`,
+      });
     } finally {
       setSendingBillId(null);
     }
   };
 
-  const handleThermalPrint = async (bill) => {
-    setIsThermalPrinting(true);
-    try {
-      toast.loading(`Printing #${bill.bill_no} on VYPRTP3001...`, { id: `thermal-toast-${bill.id}` });
-      const billData = {
-        printer: "VYPRTP3001",
-        paperWidth: 80,
-        bill: {
-          shopName: "KADRI FISH CENTER",
-          invoiceNumber: bill.bill_no || `INV-${bill.id}`,
-          date: bill.bill_date,
-          customer: {
-            name: bill.customer_name || "Customer",
-            phone: bill.customer_phone || "",
-            address: bill.customer_address || "",
-          },
-          items: (bill.items || []).map((it) => ({
-            name: it.product_name || "Item",
-            quantity: Number(it.quantity || 1),
-            rate: Number(it.rate || 0),
-            amount: Number(it.amount || (Number(it.quantity || 1) * Number(it.rate || 0))),
-          })),
-          subtotal: Number(bill.total_amount || 0),
-          discount: 0,
-          gst: 0,
-          total: Number(bill.total_amount || 0),
-          previousBalance: Number(bill.previous_balance || 0),
-          totalDueWithCarryForward: Number(bill.total_due_with_carry_forward || (Number(bill.balance_due || 0) + Number(bill.previous_balance || 0))),
-          amountPaid: Number(bill.amount_paid || 0),
-          balanceDue: Number(bill.balance_due || 0),
-          paymentStatus: bill.payment_status || "unpaid",
-          paymentMethod: bill.payment_method || "Cash",
-          previous_bills: bill.previous_bills || [],
-          payment_history: bill.payment_history || [],
-          footerMessage: "Thank You!\nVisit Again :)",
-        },
-      };
+  // Mutations
+  const deleteMutation = useMutation({
+    mutationFn: (id) => api.delete(`/bills/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      toast.success("Bill deleted successfully");
+      setBillToDelete(null);
+    },
+    onError: (err) => toast.error(err.response?.data?.detail || "Failed to delete bill"),
+  });
 
-      await printerService.printBill(billData, 48);
-      toast.success(`Receipt for #${bill.bill_no} printed successfully!`, { id: `thermal-toast-${bill.id}` });
-    } catch (err) {
-      console.error("Thermal print failed:", err);
-      toast.error(err.message || "Failed to print to VYPRTP3001", { id: `thermal-toast-${bill.id}`, duration: 5000 });
-    } finally {
-      setIsThermalPrinting(false);
-    }
-  };
-
-  const buildEmptyRows = (productList) =>
-    productList.map((p) => ({ product_id: p.id, name: p.name, unit: p.unit, rate: 0, rate_type: "none", quantity: "" }));
-
-  const fetchAllRates = async (productList, customerId) => {
-    setRatesLoading(true);
-    try {
-      const custParam = customerId ? `?customer_id=${customerId}` : "";
-      const res = await api.get(`/rates/effective-batch${custParam}`);
-      if (Array.isArray(res.data) && res.data.length > 0) {
-        return res.data;
+  const createMutation = useMutation({
+    mutationFn: (payload) => api.post("/bills", payload),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      toast.success("Bill created successfully!");
+      setIsManualModalOpen(false);
+      if (res?.data) {
+        handleThermalPrint(res.data);
       }
+    },
+    onError: (err) => toast.error(err.response?.data?.detail || "Failed to create bill"),
+  });
+
+  const updateBillMutation = useMutation({
+    mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      toast.success("Bill updated successfully!");
+      setIsEditBillModalOpen(false);
+      setEditingBill(null);
+    },
+    onError: (err) => toast.error(err.response?.data?.detail || "Failed to update bill"),
+  });
+
+  const paymentMutation = useMutation({
+    mutationFn: ({ billId, payload }) => api.put(`/bills/${billId}/payment`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      toast.success("Payment recorded successfully!");
+      setPaymentBill(null);
+    },
+    onError: (err) => toast.error(err.response?.data?.detail || "Failed to record payment"),
+  });
+
+  // Customer change in manual bill
+  const handleCustomerChange = async (customerId) => {
+    setBillMeta((prev) => ({ ...prev, customer_id: customerId }));
+    if (!customerId) {
+      // Revert to standard product rates
+      setProductRows((prev) =>
+        prev.map((row) => {
+          const bInfo = baseRateMap[row.product_id];
+          const rate = bInfo?.rate ?? 0;
+          const live_rate = bInfo?.live_rate ?? rate ?? "";
+          return {
+            ...row,
+            rate,
+            live_rate,
+          };
+        })
+      );
+      return;
+    }
+
+    try {
+      setRatesLoading(true);
+      // Query customer-specific rates (endpoint returns List[CustomerRateOut])
+      const res = await api.get(`/rates/customers?customer_id=${customerId}`);
+      const custRateList = Array.isArray(res.data)
+        ? res.data
+        : res.data?.rates
+        ? Object.entries(res.data.rates).map(([pid, r]) => ({
+            product_id: Number(pid),
+            ...r,
+          }))
+        : [];
+
+      const custRateMap = {};
+      for (const cr of custRateList) {
+        custRateMap[cr.product_id] = cr;
+      }
+
+      setProductRows((prev) =>
+        prev.map((row) => {
+          const cInfo = custRateMap[row.product_id];
+          const bInfo = baseRateMap[row.product_id];
+
+          // Priority: Customer-specific rate -> Base standard rate -> existing row rate
+          const newRate =
+            cInfo?.rate !== undefined && cInfo?.rate !== null
+              ? cInfo.rate
+              : bInfo?.rate !== undefined && bInfo?.rate !== null
+              ? bInfo.rate
+              : row.rate ?? 0;
+
+          const newLiveRate =
+            cInfo?.live_rate !== undefined && cInfo?.live_rate !== null
+              ? cInfo.live_rate
+              : bInfo?.live_rate !== undefined && bInfo?.live_rate !== null
+              ? bInfo.live_rate
+              : bInfo?.rate !== undefined
+              ? bInfo.rate
+              : row.live_rate ?? newRate;
+
+          return {
+            ...row,
+            rate: newRate,
+            live_rate: newLiveRate,
+          };
+        })
+      );
     } catch (err) {
-      console.warn("Batch rates fetch error, falling back to empty rows:", err);
+      console.error("Failed to fetch customer rates:", err);
     } finally {
       setRatesLoading(false);
     }
-    return buildEmptyRows(productList);
   };
 
-  const openManualModal = async () => {
-    const rows = buildEmptyRows(products);
-    setProductRows(rows);
-    setBillMeta({ customer_id: "", bill_date: new Date().toISOString().split("T")[0], amount_paid: "", payment_method: "Cash" });
-    setIsManualModalOpen(true);
-  };
+  // Pull customer rates when opening modal with a preselected customer
+  useEffect(() => {
+    if (isManualModalOpen && billMeta.customer_id && products.length > 0) {
+      handleCustomerChange(billMeta.customer_id);
+    }
+  }, [isManualModalOpen]);
 
-  const openEditBillModal = (bill) => {
-    setEditingBill(bill);
-    setEditBillMeta({
-      customer_id: String(bill.customer_id ?? ""),
-      bill_date: bill.bill_date || new Date().toISOString().split("T")[0],
-      payment_method: bill.payment_method || "Cash",
-    });
-    setEditProductRows(
-      (bill.items || []).map((item) => ({
-        product_id: item.product_id ?? "",
-        name: item.product_name || "Custom Item",
-        unit: item.unit || "kg",
-        rate: String(item.rate ?? 0),
-        quantity: String(item.quantity ?? 0),
-        tag: item.tag || null,
-        circled_value: item.circled_value || null,
-        confidence: item.confidence ?? 1,
-        raw_text: item.raw_text || null,
-      }))
-    );
-    setIsEditBillModalOpen(true);
-  };
-
-  const handleCustomerChange = async (newCustomerId) => {
-    setBillMeta((m) => ({ ...m, customer_id: newCustomerId }));
-    if (!newCustomerId || products.length === 0) return;
-    const rows = await fetchAllRates(products, newCustomerId);
-    setProductRows((prev) => rows.map((r, i) => ({ ...r, quantity: prev[i]?.quantity ?? "" })));
-  };
-
+  // Manual Bill Submit
   const handleManualSubmit = (e) => {
     e.preventDefault();
-    if (!billMeta.customer_id) { toast.error("Please select a customer"); return; }
-    const validItems = productRows.filter((r) => parseFloat(r.quantity) > 0);
-    if (validItems.length === 0) { toast.error("Enter quantity for at least one product"); return; }
+    if (!billMeta.customer_id) {
+      toast.error("Please select a customer");
+      return;
+    }
+
+    const itemsToSave = [];
+    for (const r of productRows) {
+      const normalQ = parseFloat(r.quantity || 0);
+      const normalR = parseFloat(r.rate || 0);
+      if (normalQ > 0) {
+        itemsToSave.push({
+          product_id: r.product_id,
+          quantity: normalQ,
+          rate: normalR,
+          amount: parseFloat((normalQ * normalR).toFixed(2)),
+          is_live: false,
+          circled_value: null,
+        });
+      }
+
+      const liveQ = parseFloat(r.live_quantity || 0);
+      const liveR = parseFloat(r.live_rate || r.rate || 0);
+      if (liveQ > 0) {
+        itemsToSave.push({
+          product_id: r.product_id,
+          quantity: liveQ,
+          rate: liveR,
+          amount: parseFloat((liveQ * liveR).toFixed(2)),
+          is_live: true,
+          circled_value: String(liveR),
+        });
+      }
+    }
+
+    if (itemsToSave.length === 0) {
+      toast.error("Enter quantity (Normal or Live) for at least one product");
+      return;
+    }
+
     createMutation.mutate({
       customer_id: parseInt(billMeta.customer_id),
       bill_date: billMeta.bill_date,
       amount_paid: parseFloat(billMeta.amount_paid || 0),
       payment_method: billMeta.payment_method || "Cash",
-      items: validItems.map((r) => ({
-        product_id: r.product_id,
-        quantity: parseFloat(r.quantity),
-        rate: parseFloat(r.rate || 0),
-        amount: parseFloat(r.quantity) * parseFloat(r.rate || 0),
-      })),
+      items: itemsToSave,
       source: "manual",
     });
   };
 
-  const handleEditBillSubmit = (e) => {
-    e.preventDefault();
-    if (!editingBill) return;
-    if (!editBillMeta.customer_id) { toast.error("Please select a customer"); return; }
-    const validItems = editProductRows.filter((row) => parseFloat(row.quantity) > 0);
-    if (validItems.length === 0) { toast.error("Enter quantity for at least one product"); return; }
-
-    updateBillMutation.mutate({
-      billId: editingBill.id,
-      payload: {
-        customer_id: parseInt(editBillMeta.customer_id),
-        bill_date: editBillMeta.bill_date,
-        payment_method: editBillMeta.payment_method || "Cash",
-        items: validItems.map((row) => ({
-          product_id: row.product_id ? Number(row.product_id) : null,
-          quantity: parseFloat(row.quantity),
-          rate: parseFloat(row.rate || 0),
-          amount: parseFloat(row.quantity) * parseFloat(row.rate || 0),
-          tag: row.tag || null,
-          circled_value: row.circled_value || null,
-          confidence: row.confidence ?? 1.0,
-          raw_text: row.raw_text || null,
-        })),
-      },
-    });
-  };
-
+  // Calculation totals
   const billTotal = useMemo(
-    () => productRows.reduce((s, r) => s + (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0), 0),
+    () =>
+      productRows.reduce((s, r) => {
+        const normalAmt = (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0);
+        const liveRate = parseFloat(r.live_rate) || parseFloat(r.rate) || 0;
+        const liveAmt = (parseFloat(r.live_quantity) || 0) * liveRate;
+        return s + normalAmt + liveAmt;
+      }, 0),
     [productRows]
   );
+
   const billBalance = useMemo(
     () => Math.max(0, billTotal - (parseFloat(billMeta.amount_paid) || 0)),
     [billTotal, billMeta.amount_paid]
-  );
-  const editBillTotal = useMemo(
-    () => editProductRows.reduce((s, r) => s + (parseFloat(r.quantity) || 0) * (parseFloat(r.rate) || 0), 0),
-    [editProductRows]
   );
 
   const handlePaymentSubmit = (e) => {
     e.preventDefault();
     if (!paymentBill) return;
     const amt = parseFloat(paymentForm.installment_amount || 0);
-    const remaining = paymentBill.balance_due;
     if (amt <= 0) {
-      toast.error("Please enter an amount greater than zero");
-      return;
-    }
-    if (amt > remaining + 0.001) {
-      toast.error(`Cannot pay ₹${amt.toFixed(2)} — remaining balance is only ₹${remaining.toFixed(2)}`);
+      toast.error("Please enter a valid amount greater than zero");
       return;
     }
     paymentMutation.mutate({
       billId: paymentBill.id,
       payload: {
         installment_amount: amt,
-        payment_method: paymentForm.payment_method,
+        payment_method: paymentForm.payment_method || "Cash",
         note: paymentForm.note || null,
       },
-    });
-  };
-
-  const openPaymentModal = (bill) => {
-    setPaymentBill(bill);
-    setPaymentForm({
-      installment_amount: "",
-      payment_method: bill.payment_method || "Cash",
-      note: "",
     });
   };
 
@@ -403,137 +464,173 @@ export default function BillsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-zinc-100 tracking-tight">
-            Bills & Invoices
-          </h1>
-          <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
-            {totalBills} total bills · {dueCount} pending balance payment
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setIsWhatsAppModalOpen(true)}
-            className="btn-secondary text-xs sm:text-sm flex items-center gap-1.5"
+      {/* PRD v2 Page Header */}
+      <PageHeader
+        title="Bills & Invoices"
+        purpose="Create, send, and collect customer bills with itemized accounting"
+        primaryAction={
+          <Button
+            variant="primary"
+            icon={Plus}
+            onClick={() => setIsManualModalOpen(true)}
           >
-            <Send className="w-4 h-4 text-emerald-400" />
-            <span>WhatsApp Dispatch</span>
-          </button>
-          <button
-            onClick={openManualModal}
-            className="btn-primary text-xs sm:text-sm flex items-center gap-1.5"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Create Bill</span>
-          </button>
-        </div>
-      </div>
+            Create Bill
+          </Button>
+        }
+        moreActions={[
+          {
+            label: isFetching ? "Refreshing…" : "Refresh bills",
+            icon: ArrowsClockwise,
+            onClick: () => refetch(),
+          },
+          {
+            label: "Send WhatsApp batch",
+            icon: PaperPlaneTilt,
+            onClick: () => setIsWhatsAppModalOpen(true),
+          },
+        ]}
+      />
 
-      {/* Simplified, High-Clarity Filter Bar */}
-      <div className="card p-3 sm:p-4 flex flex-col gap-3">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-          {/* Segmented Quick Status Switcher */}
+      {/* Filter Bar with Status Tabs & Counts (PRD v2 Section 12) */}
+      <div className="card p-4 flex flex-col gap-4">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+          {/* Segmented Status Tabs */}
           <div className="segmented-nav">
             <button
-              onClick={() => { setSelectedStatus(""); setPage(1); }}
+              onClick={() => {
+                setSelectedStatus("");
+                setPage(1);
+              }}
               className={`segmented-item ${selectedStatus === "" ? "active" : ""}`}
             >
-              All Bills {totalBills > 0 ? `(${totalBills})` : ""}
+              <span>All Bills</span>
+              {totalBills > 0 && <span className="opacity-75 font-mono">({totalBills})</span>}
             </button>
             <button
-              onClick={() => { setSelectedStatus("due"); setPage(1); }}
+              onClick={() => {
+                setSelectedStatus("due");
+                setPage(1);
+              }}
               className={`segmented-item ${selectedStatus === "due" ? "active" : ""}`}
             >
-              Pending Due ({dueCount})
+              <WarningCircle size={16} weight="bold" className="text-rose-400" />
+              <span>Payment Due</span>
+              {dueCount > 0 && <span className="opacity-75 font-mono">({dueCount})</span>}
             </button>
             <button
-              onClick={() => { setSelectedStatus("paid"); setPage(1); }}
+              onClick={() => {
+                setSelectedStatus("partial");
+                setPage(1);
+              }}
+              className={`segmented-item ${selectedStatus === "partial" ? "active" : ""}`}
+            >
+              <Clock size={16} weight="bold" className="text-amber-400" />
+              <span>Partially Paid</span>
+              {partialCount > 0 && <span className="opacity-75 font-mono">({partialCount})</span>}
+            </button>
+            <button
+              onClick={() => {
+                setSelectedStatus("paid");
+                setPage(1);
+              }}
               className={`segmented-item ${selectedStatus === "paid" ? "active" : ""}`}
             >
-              Paid in Full ({paidCount})
+              <CheckCircle size={16} weight="bold" className="text-emerald-400" />
+              <span>Paid in Full</span>
+              {paidCount > 0 && <span className="opacity-75 font-mono">({paidCount})</span>}
             </button>
           </div>
 
-          {/* Search & More Filters Toggle */}
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1 sm:w-64">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-              <input
-                type="text"
-                placeholder="Search customer or bill #..."
+          {/* Search & Advanced Filters */}
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1 sm:w-72">
+              <Input
+                placeholder="Search customer or bill #…"
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
                   setPage(1);
                 }}
-                className="input-field pl-9 text-xs sm:text-sm"
+                leftIcon={MagnifyingGlass}
               />
             </div>
-            <button
+            <Button
+              variant="secondary"
+              icon={SlidersHorizontal}
               onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-              className={`btn-secondary text-xs sm:text-sm px-3 flex items-center gap-1.5 ${hasAdvancedFilters ? "border-emerald-500/40 text-emerald-400" : ""
-                }`}
-              title="More filter options"
+              className={hasAdvancedFilters ? "border-emerald-500 text-emerald-400" : ""}
             >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Filters</span>
-              {hasAdvancedFilters && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
-            </button>
+              Filters
+              {hasAdvancedFilters && (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 ml-1" />
+              )}
+            </Button>
           </div>
         </div>
 
         {/* Collapsible Advanced Filters */}
         {showAdvancedFilters && (
-          <div className="pt-3 border-t border-zinc-800/80 grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs animate-slide-in">
-            <div>
-              <label className="label">Customer</label>
-              <select
+          <div className="pt-4 border-t border-zinc-800 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-in fade-in">
+            <FormField label="Customer">
+              <Select
                 value={selectedCustomerId}
-                onChange={(e) => { setSelectedCustomerId(e.target.value); setPage(1); }}
-                className="input-field text-xs"
+                onChange={(e) => {
+                  setSelectedCustomerId(e.target.value);
+                  setPage(1);
+                }}
               >
                 <option value="">All Customers</option>
                 {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
                 ))}
-              </select>
-            </div>
-            <div>
-              <label className="label">Creation Source</label>
-              <select
+              </Select>
+            </FormField>
+
+            <FormField label="Source">
+              <Select
                 value={selectedSource}
-                onChange={(e) => { setSelectedSource(e.target.value); setPage(1); }}
-                className="input-field text-xs"
+                onChange={(e) => {
+                  setSelectedSource(e.target.value);
+                  setPage(1);
+                }}
               >
                 <option value="">All Sources</option>
                 <option value="ledger_ai">Ledger AI</option>
                 <option value="manual">Manual Entry</option>
                 <option value="bill_ai">Single Bill AI</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">From Date</label>
-              <input
+              </Select>
+            </FormField>
+
+            <FormField label="From Date">
+              <Input
                 type="date"
                 value={startDate}
-                onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
-                className="input-field text-xs"
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setPage(1);
+                }}
               />
-            </div>
-            <div>
-              <label className="label">To Date</label>
-              <input
+            </FormField>
+
+            <FormField label="To Date">
+              <Input
                 type="date"
                 value={endDate}
-                onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
-                className="input-field text-xs"
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setPage(1);
+                }}
               />
-            </div>
+            </FormField>
+
             {hasAdvancedFilters && (
-              <div className="sm:col-span-4 flex justify-end">
-                <button
+              <div className="sm:col-span-2 lg:col-span-4 flex justify-end">
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  className="text-rose-400 hover:text-rose-300"
                   onClick={() => {
                     setSelectedCustomerId("");
                     setSelectedSource("");
@@ -541,31 +638,35 @@ export default function BillsPage() {
                     setEndDate("");
                     setPage(1);
                   }}
-                  className="text-xs text-rose-400 hover:text-rose-300 font-medium"
                 >
-                  Reset Filters
-                </button>
+                  Reset all filters
+                </Button>
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* Bills Content */}
-      {isLoading ? (
-        <div className="card p-16 flex items-center justify-center">
-          <div className="w-7 h-7 rounded-full border-2 border-zinc-700 border-t-emerald-500 animate-spin" />
-        </div>
-      ) : paginatedBills.length === 0 ? (
-        <div className="card p-16 text-center text-zinc-500 text-sm">
-          <FileText className="w-10 h-10 mx-auto mb-2 opacity-30 text-zinc-600" />
-          No customer bills found matching your filter criteria.
-        </div>
-      ) : (
-        <>
-          {/* Desktop Table View (>= md) */}
-          <div className="hidden md:block card overflow-hidden">
-            <div className="overflow-x-auto">
+      {/* Bills Content Table */}
+      <div className="card overflow-hidden">
+        {isLoading ? (
+          <TableSkeleton rows={8} cols={7} />
+        ) : paginatedBills.length === 0 ? (
+          <EmptyState
+            icon={Receipt}
+            title="No bills found"
+            description={
+              search || hasAdvancedFilters || selectedStatus
+                ? "No customer bills matched your selected filter criteria. Try clearing filters or search terms."
+                : "Create your first customer invoice to record sales and track collections."
+            }
+            actionLabel="Create Bill"
+            onAction={() => setIsManualModalOpen(true)}
+          />
+        ) : (
+          <>
+            {/* Desktop Table View (52px min row height, 16px text) */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="data-table">
                 <thead>
                   <tr>
@@ -576,125 +677,452 @@ export default function BillsPage() {
                     <th className="text-right">Paid</th>
                     <th className="text-right">Balance Due</th>
                     <th className="text-center">Status</th>
-                    <th className="text-right">Actions</th>
+                    <th className="text-right">Next Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedBills.map((b) => {
                     const isPaid = b.payment_status === "paid";
-                    const isPartial = b.payment_status === "partial";
-
                     return (
-                      <tr key={b.id}>
+                      <tr key={b.id} className="min-h-[52px]">
                         <td>
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-semibold text-zinc-200">{b.bill_no}</span>
+                            <span className="font-mono font-bold text-zinc-100 text-base">
+                              #{b.bill_no}
+                            </span>
                             {b.source === "ledger_ai" && (
-                              <span className="badge-green text-[10px]">AI</span>
+                              <span className="badge-info text-xs py-0 px-1.5">AI</span>
                             )}
                           </div>
-                          <div className="text-xs text-zinc-500 mt-0.5">
-                            {formatDate(b.bill_date)}
-                          </div>
+                          <div className="cell-secondary">{formatDateIN(b.bill_date)}</div>
                         </td>
+
                         <td>
-                          <div className="font-medium text-zinc-100">{b.customer_name}</div>
+                          <div className="font-semibold text-zinc-100 text-base">{b.customer_name}</div>
                           {b.customer_phone && (
-                            <div className="text-xs text-zinc-500 font-mono">{b.customer_phone}</div>
+                            <div className="cell-secondary font-mono">{b.customer_phone}</div>
                           )}
                         </td>
+
                         <td>
-                          <span className="badge-zinc">
-                            {b.payment_method === "UPI" ? <QrCode className="w-3 h-3 text-purple-400" /> : <Banknote className="w-3 h-3 text-emerald-400" />}
+                          <span className="badge-neutral text-xs">
+                            {b.payment_method === "UPI" ? (
+                              <QrCode size={14} weight="bold" className="text-purple-400" />
+                            ) : (
+                              <Money size={14} weight="bold" className="text-emerald-400" />
+                            )}
                             {b.payment_method || "Cash"}
                           </span>
                         </td>
-                        <td className="text-right font-mono font-medium text-zinc-200">
-                          {formatCurrency(b.total_amount)}
+
+                        <td className="cell-money text-base text-zinc-100">
+                          {formatINR(b.total_amount)}
                         </td>
-                        <td className="text-right font-mono text-zinc-400">
-                          {formatCurrency(b.amount_paid)}
+
+                        <td className="cell-money text-base text-emerald-400">
+                          {formatINR(b.amount_paid)}
                         </td>
-                        <td className="text-right font-mono font-bold">
+
+                        <td className="cell-money text-base">
                           {b.balance_due > 0 ? (
-                            <span className="text-amber-400">{formatCurrency(b.balance_due)}</span>
+                            <span className="text-amber-300 font-bold">
+                              {formatINR(b.balance_due)}
+                            </span>
                           ) : (
-                            <span className="text-zinc-500">₹0</span>
+                            <span className="text-zinc-500">₹0.00</span>
                           )}
                         </td>
+
                         <td className="text-center">
-                          <span
-                            className={
-                              isPaid
-                                ? "badge-green"
-                                : isPartial
-                                  ? "badge-yellow"
-                                  : "badge-red"
-                            }
-                          >
-                            {isPaid ? "Paid" : isPartial ? "Partial" : "Unpaid"}
-                          </span>
+                          <StatusBadge status={b.payment_status} />
                         </td>
+
+                        {/* PRD v2 Section 12: ONE next action per row, rest in MoreActions */}
                         <td className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            {!isPaid && (
-                              <button
-                                onClick={() => openPaymentModal(b)}
-                                className="btn-primary btn-sm !py-1 !px-2.5 text-xs mr-1"
-                                title="Record payment"
+                          <div className="flex items-center justify-end gap-2">
+                            {!isPaid ? (
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                icon={Wallet}
+                                onClick={() => {
+                                  setPaymentBill(b);
+                                  setPaymentForm({
+                                    installment_amount: b.balance_due?.toString() || "",
+                                    payment_method: "Cash",
+                                    note: "",
+                                  });
+                                }}
                               >
-                                <Wallet className="w-3.5 h-3.5" />
-                                <span>Pay</span>
-                              </button>
+                                Record Payment
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={FilePdf}
+                                onClick={() => downloadBillPdf(b)}
+                              >
+                                Download PDF
+                              </Button>
                             )}
-                            <button
-                              onClick={() => sendInvoiceWhatsApp(b)}
-                              className="btn-ghost btn-sm !px-1.5 text-emerald-400 hover:text-emerald-300"
-                              title="Send WhatsApp"
-                            >
-                              <Send className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => downloadBillPdf(b)}
-                              className="btn-ghost btn-sm !px-1.5"
-                              title="Download PDF"
-                            >
-                              <FileDown className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleThermalPrint(b)}
-                              disabled={isThermalPrinting}
-                              className="btn-ghost btn-sm !px-1.5 text-zinc-300 hover:text-emerald-400"
-                              title="Print to VYPRTP3001 (Thermal 80mm)"
-                            >
-                              <Printer className="w-3.5 h-3.5 text-emerald-400" />
-                            </button>
-                            <button
-                              onClick={() => setViewingBill(b)}
-                              className="btn-ghost btn-sm !px-1.5"
-                              title="View Items"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => openEditBillModal(b)}
-                              className="btn-ghost btn-sm !px-1.5 hover:text-amber-400"
-                              title="Edit Bill"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (confirm(`Delete bill ${b.bill_no}?`)) {
-                                  deleteMutation.mutate(b.id);
-                                }
-                              }}
-                              className="btn-ghost btn-sm !px-1.5 hover:text-rose-400 hover:bg-rose-500/10"
-                              title="Delete Bill"
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                            </button>
+
+                            {/* Overflow Actions */}
+                            <MoreActions
+                              label={`More options for #${b.bill_no}`}
+                              items={[
+                                {
+                                  label: "View details",
+                                  icon: Eye,
+                                  onClick: () => setViewingBill(b),
+                                },
+                                {
+                                  label: "Download PDF invoice",
+                                  icon: FilePdf,
+                                  onClick: () => downloadBillPdf(b),
+                                },
+                                {
+                                  label: "Send on WhatsApp",
+                                  icon: PaperPlaneTilt,
+                                  onClick: () => sendInvoiceWhatsApp(b),
+                                },
+                                {
+                                  label: "Thermal Print (80mm)",
+                                  icon: Printer,
+                                  onClick: () => handleThermalPrint(b),
+                                },
+                                { divider: true },
+                                {
+                                  label: "Delete bill",
+                                  icon: Trash,
+                                  variant: "danger",
+                                  onClick: () => setBillToDelete(b),
+                                },
+                              ]}
+                            />
                           </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Card View (< md) */}
+            <div className="block md:hidden divide-y divide-zinc-800">
+              {paginatedBills.map((b) => {
+                const isPaid = b.payment_status === "paid";
+                return (
+                  <div key={b.id} className="p-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-zinc-100 text-base">
+                          #{b.bill_no}
+                        </span>
+                        <span className="text-xs text-zinc-400">{formatDateIN(b.bill_date)}</span>
+                      </div>
+                      <StatusBadge status={b.payment_status} />
+                    </div>
+
+                    <div className="flex items-center justify-between text-base">
+                      <span className="font-semibold text-zinc-100">{b.customer_name}</span>
+                      <span className="badge-neutral text-xs">{b.payment_method || "Cash"}</span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-sm">
+                      <div>
+                        <span className="text-xs text-zinc-400 block">Total</span>
+                        <span className="font-mono font-bold text-zinc-100 mt-0.5 block tabular-nums">
+                          {formatINR(b.total_amount)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-xs text-zinc-400 block">Paid</span>
+                        <span className="font-mono font-semibold text-emerald-400 mt-0.5 block tabular-nums">
+                          {formatINR(b.amount_paid)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-xs text-zinc-400 block">Balance</span>
+                        <span
+                          className={`font-mono font-bold mt-0.5 block tabular-nums ${
+                            b.balance_due > 0 ? "text-amber-300" : "text-zinc-500"
+                          }`}
+                        >
+                          {b.balance_due > 0 ? formatINR(b.balance_due) : "₹0.00"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Single Next Action Bar */}
+                    <div className="flex items-center justify-between pt-1 gap-2">
+                      {!isPaid ? (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          icon={Wallet}
+                          className="flex-1"
+                          onClick={() => {
+                            setPaymentBill(b);
+                            setPaymentForm({
+                              installment_amount: b.balance_due?.toString() || "",
+                              payment_method: "Cash",
+                              note: "",
+                            });
+                          }}
+                        >
+                          Record Payment
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={FilePdf}
+                          className="flex-1"
+                          onClick={() => downloadBillPdf(b)}
+                        >
+                          Download PDF
+                        </Button>
+                      )}
+
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={Eye}
+                        onClick={() => setViewingBill(b)}
+                      >
+                        View
+                      </Button>
+
+                      <MoreActions
+                        label="More actions"
+                        items={[
+                          {
+                            label: "Thermal Print (80mm)",
+                            icon: Printer,
+                            onClick: () => handleThermalPrint(b),
+                          },
+                          {
+                            label: "Send on WhatsApp",
+                            icon: PaperPlaneTilt,
+                            onClick: () => sendInvoiceWhatsApp(b),
+                          },
+                          { divider: true },
+                          {
+                            label: "Delete bill",
+                            icon: Trash,
+                            variant: "danger",
+                            onClick: () => setBillToDelete(b),
+                          },
+                        ]}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalBills}
+              pageSize={PAGE_SIZE}
+              onPageChange={setPage}
+            />
+          </>
+        )}
+      </div>
+
+      {/* ─── 4-SECTION MANUAL BILL CREATION MODAL (PRD v2 Section 12) ── */}
+      <Modal
+        isOpen={isManualModalOpen}
+        onClose={() => setIsManualModalOpen(false)}
+        title="Create New Bill"
+        subtitle="Itemized customer bill supporting standard and live rates"
+        maxWidth="max-w-4xl"
+      >
+        <form onSubmit={handleManualSubmit} className="flex flex-col gap-6">
+          {/* SECTION 1: CUSTOMER SELECTION & PREVIOUS BALANCE */}
+          <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col gap-3">
+            <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+              <User size={18} weight="bold" className="text-emerald-400" />
+              <span>1. Customer & Bill Information</span>
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormField label="Select Customer" required>
+                <Select
+                  value={billMeta.customer_id}
+                  onChange={(e) => handleCustomerChange(e.target.value)}
+                  required
+                >
+                  <option value="">Choose customer…</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} {c.total_balance > 0 ? `(Due: ₹${c.total_balance})` : ""}
+                    </option>
+                  ))}
+                </Select>
+              </FormField>
+
+              <FormField label="Bill Date" required>
+                <Input
+                  type="date"
+                  value={billMeta.bill_date}
+                  onChange={(e) => setBillMeta({ ...billMeta, bill_date: e.target.value })}
+                  required
+                />
+              </FormField>
+            </div>
+
+            {/* Previous Balance banner (shown BEFORE items per PRD v2 Section 12) */}
+            {billMeta.customer_id && (() => {
+              const selCust = customers.find((c) => String(c.id) === String(billMeta.customer_id));
+              if (!selCust) return null;
+              const totBal = parseFloat(selCust.total_balance || 0);
+              return totBal > 0 ? (
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-sm">
+                  <span className="text-amber-300 font-medium flex items-center gap-2">
+                    <WarningCircle size={18} weight="bold" />
+                    <span>Previous Outstanding Balance:</span>
+                  </span>
+                  <span className="font-mono font-bold text-amber-300 text-base tabular-nums">
+                    {formatINR(totBal)}
+                  </span>
+                </div>
+              ) : (
+                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-sm flex items-center gap-2">
+                  <CheckCircle size={18} weight="bold" />
+                  <span>Customer has zero previous pending balance.</span>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* SECTION 2: ITEMS & QUANTITIES (NORMAL + LIVE) */}
+          <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+                <Receipt size={18} weight="bold" className="text-emerald-400" />
+                <span>2. Products & Quantities</span>
+              </h3>
+              {ratesLoading && (
+                <span className="text-xs text-zinc-400">Loading customer rates…</span>
+              )}
+            </div>
+
+            <div className="border border-zinc-800 rounded-lg overflow-x-auto">
+              <table className="data-table min-w-[620px]">
+                <thead>
+                  <tr>
+                    <th className="w-44">Product</th>
+                    <th className="text-right w-24">Normal Rate</th>
+                    <th className="text-right w-24">Normal Qty</th>
+                    <th className="text-right w-24 text-sky-400">Live Rate</th>
+                    <th className="text-right w-24 text-emerald-400">Live Qty (⊚)</th>
+                    <th className="text-right w-28">Line Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {productRows.map((row, idx) => {
+                    const normalQ = parseFloat(row.quantity) || 0;
+                    const normalR = parseFloat(row.rate) || 0;
+                    const normalAmt = normalQ * normalR;
+
+                    const liveQ = parseFloat(row.live_quantity) || 0;
+                    const liveR = parseFloat(row.live_rate) || normalR;
+                    const liveAmt = liveQ * liveR;
+
+                    const rowAmt = normalAmt + liveAmt;
+
+                    return (
+                      <tr key={row.product_id} className={`min-h-[52px] ${liveQ > 0 ? "bg-emerald-950/20" : ""}`}>
+                        <td>
+                          <span className="font-semibold text-zinc-100 text-base">{row.name}</span>
+                          <span className="text-xs text-zinc-400 block font-mono">Unit: {row.unit}</span>
+                        </td>
+
+                        <td className="text-right">
+                          <input
+                            type="number"
+                            step="any"
+                            value={row.rate}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.preventDefault();
+                            }}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setProductRows((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, rate: val } : r))
+                              );
+                            }}
+                            className="input min-h-[38px] text-right font-mono py-1 px-2 w-24 text-base"
+                            placeholder="0.00"
+                          />
+                        </td>
+
+                        <td className="text-right">
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            placeholder="0"
+                            value={row.quantity}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.preventDefault();
+                            }}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setProductRows((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, quantity: val } : r))
+                              );
+                            }}
+                            className="input min-h-[38px] text-right font-mono font-bold text-zinc-100 py-1 px-2 w-24 text-base"
+                          />
+                        </td>
+
+                        <td className="text-right">
+                          <input
+                            type="number"
+                            step="any"
+                            value={row.live_rate ?? ""}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.preventDefault();
+                            }}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setProductRows((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, live_rate: val } : r))
+                              );
+                            }}
+                            className="input min-h-[38px] text-right font-mono py-1 px-2 w-24 text-base text-sky-300"
+                            placeholder="Live ₹"
+                          />
+                        </td>
+
+                        <td className="text-right">
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            placeholder="⊚ 0"
+                            value={row.live_quantity}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.preventDefault();
+                            }}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setProductRows((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, live_quantity: val } : r))
+                              );
+                            }}
+                            className="input min-h-[38px] text-right font-mono font-bold text-emerald-300 py-1 px-2 w-24 text-base"
+                          />
+                        </td>
+
+                        <td className="text-right cell-money text-base">
+                          {rowAmt > 0 ? formatINR(rowAmt) : "—"}
                         </td>
                       </tr>
                     );
@@ -704,877 +1132,427 @@ export default function BillsPage() {
             </div>
           </div>
 
-          {/* Mobile Card View (< md) - Spacious, Distinct Cards with generous gaps */}
-          <div className="block md:hidden flex flex-col gap-4">
-            {paginatedBills.map((b) => {
-              const isPaid = b.payment_status === "paid";
-              const isPartial = b.payment_status === "partial";
+          {/* SECTION 3: PAYMENT COLLECTION & METHOD */}
+          <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col gap-3">
+            <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+              <Wallet size={18} weight="bold" className="text-emerald-400" />
+              <span>3. Payment Details</span>
+            </h3>
 
-              return (
-                <div
-                  key={b.id}
-                  className="card p-4 sm:p-5 flex flex-col gap-3.5 border border-zinc-800/90 bg-zinc-900/90 shadow-sm hover:border-zinc-700/80 transition-all rounded-xl"
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormField label="Amount Paid Now (₹)">
+                <Input
+                  type="number"
+                  step="any"
+                  min="0"
+                  max={billTotal}
+                  value={billMeta.amount_paid}
+                  onChange={(e) => setBillMeta({ ...billMeta, amount_paid: e.target.value })}
+                  placeholder="₹0.00"
+                  className="font-mono font-bold text-emerald-400"
+                />
+              </FormField>
+
+              <FormField label="Payment Method">
+                <Select
+                  value={billMeta.payment_method}
+                  onChange={(e) => setBillMeta({ ...billMeta, payment_method: e.target.value })}
                 >
-                  {/* Top Header: Bill #, AI indicator, Date, Status */}
-                  <div className="flex items-center justify-between pb-3 border-b border-zinc-800/70">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-sm font-bold text-zinc-100 tracking-tight">#{b.bill_no}</span>
-                      {b.source === "ledger_ai" && (
-                        <span className="badge-green text-[10px] px-1.5 py-0.5 font-semibold">AI</span>
-                      )}
-                      <span className="text-xs text-zinc-400">· {formatDate(b.bill_date)}</span>
-                    </div>
-                    <span
-                      className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${isPaid
-                          ? "badge-green"
-                          : isPartial
-                            ? "badge-yellow"
-                            : "badge-red"
-                        }`}
-                    >
-                      {isPaid ? "Paid" : isPartial ? "Partial" : "Unpaid"}
-                    </span>
-                  </div>
-
-                  {/* Customer Information & Payment Mode */}
-                  <div className="flex items-start justify-between gap-3 pt-0.5">
-                    <div className="space-y-1">
-                      <div className="font-semibold text-zinc-100 text-base leading-snug">{b.customer_name}</div>
-                      {b.customer_phone ? (
-                        <a
-                          href={`tel:${b.customer_phone}`}
-                          className="text-xs text-emerald-400/90 hover:text-emerald-300 font-mono inline-block hover:underline"
-                        >
-                          {b.customer_phone}
-                        </a>
-                      ) : (
-                        <span className="text-xs text-zinc-500 italic block">No phone number</span>
-                      )}
-                    </div>
-                    <span className="badge-zinc text-xs px-2.5 py-1 shrink-0 flex items-center gap-1.5">
-                      {b.payment_method === "UPI" ? (
-                        <QrCode className="w-3.5 h-3.5 text-purple-400" />
-                      ) : (
-                        <Banknote className="w-3.5 h-3.5 text-emerald-400" />
-                      )}
-                      <span>{b.payment_method || "Cash"}</span>
-                    </span>
-                  </div>
-
-                  {/* Financial Metrics Strip */}
-                  <div className="grid grid-cols-3 gap-3 p-3.5 rounded-xl bg-zinc-950/80 border border-zinc-800/80 text-xs">
-                    <div className="space-y-1">
-                      <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider block">
-                        Total
-                      </span>
-                      <span className="font-mono text-sm font-bold text-zinc-100 block">
-                        {formatCurrency(b.total_amount)}
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider block">
-                        Paid
-                      </span>
-                      <span className="font-mono text-sm font-semibold text-zinc-300 block">
-                        {formatCurrency(b.amount_paid)}
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider block">
-                        Balance
-                      </span>
-                      <span
-                        className={`font-mono text-sm font-bold block ${b.balance_due > 0 ? "text-amber-400" : "text-zinc-500"
-                          }`}
-                      >
-                        {b.balance_due > 0 ? formatCurrency(b.balance_due) : "₹0"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Touch Action Bar */}
-                  <div className="flex items-center justify-between pt-2 border-t border-zinc-800/70 gap-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {!isPaid && (
-                        <button
-                          onClick={() => openPaymentModal(b)}
-                          className="btn-primary btn-sm !py-2 !px-3.5 text-xs flex items-center gap-1.5 font-semibold shadow-sm"
-                        >
-                          <Wallet className="w-3.5 h-3.5" />
-                          <span>Pay</span>
-                        </button>
-                      )}
-                      <button
-                        onClick={() => sendInvoiceWhatsApp(b)}
-                        className="p-2.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 active:scale-95 transition-all"
-                        title="Send WhatsApp"
-                        aria-label="Send WhatsApp"
-                      >
-                        <Send className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => downloadBillPdf(b)}
-                        className="p-2.5 rounded-lg bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 active:scale-95 transition-all"
-                        title="Download PDF"
-                        aria-label="Download PDF"
-                      >
-                        <FileDown className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleThermalPrint(b)}
-                        disabled={isThermalPrinting}
-                        className="p-2.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 active:scale-95 transition-all"
-                        title="Thermal Print 80mm"
-                        aria-label="Thermal Print 80mm"
-                      >
-                        <Printer className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => setViewingBill(b)}
-                        className="p-2.5 rounded-lg bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 active:scale-95 transition-all"
-                        title="View Items"
-                        aria-label="View Items"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openEditBillModal(b)}
-                        className="p-2.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-amber-400 hover:bg-zinc-700 active:scale-95 transition-all"
-                        title="Edit Bill"
-                        aria-label="Edit Bill"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (confirm(`Delete bill ${b.bill_no}?`)) {
-                            deleteMutation.mutate(b.id);
-                          }
-                        }}
-                        className="p-2.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/15 active:scale-95 transition-all"
-                        title="Delete Bill"
-                        aria-label="Delete Bill"
-                      >
-                        <Trash2 className="w-4 h-4 text-rose-400" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Server-Side Chunked Pagination */}
-          <Pagination
-            page={page}
-            totalPages={totalPages}
-            totalItems={totalBills}
-            pageSize={PAGE_SIZE}
-            onPageChange={setPage}
-            className="mt-4"
-          />
-        </>
-      )}
-
-      {/* ─── WHATSAPP SEND MODAL ─────────────────────────────────────── */}
-      {isWhatsAppModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-          <div className="card w-full max-w-2xl flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-                  <Send className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-zinc-100">WhatsApp Invoices</h3>
-                  <p className="text-xs text-zinc-400">Dispatch itemized invoices directly to customer WhatsApp</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsWhatsAppModalOpen(false)}
-                className="text-zinc-400 hover:text-zinc-100 p-1"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 flex-1 overflow-y-auto flex flex-col gap-3">
-              <div className="border border-zinc-800 rounded-lg overflow-hidden bg-zinc-950/60 divide-y divide-zinc-800/50">
-                {filteredBills.length === 0 ? (
-                  <div className="p-8 text-center text-zinc-500 text-xs">No bills in current selection.</div>
-                ) : (
-                  filteredBills.map((b) => (
-                    <div key={b.id} className="p-3 flex items-center justify-between gap-3 hover:bg-zinc-800/40">
-                      <div>
-                        <div className="font-medium text-zinc-200 text-sm">{b.customer_name}</div>
-                        <div className="text-xs text-zinc-500 flex items-center gap-2 mt-0.5">
-                          <span>#{b.bill_no}</span>
-                          <span>·</span>
-                          <span className="font-mono text-zinc-300">{formatCurrency(b.total_amount)}</span>
-                          <span>·</span>
-                          {b.customer_phone ? (
-                            <span className="text-emerald-400 font-mono">{b.customer_phone}</span>
-                          ) : (
-                            <span className="text-rose-400 italic">No phone saved</span>
-                          )}
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        disabled={sendingBillId === b.id}
-                        onClick={() => sendInvoiceWhatsApp(b)}
-                        className="btn-primary btn-sm"
-                      >
-                        {sendingBillId === b.id ? "Sending..." : "Send WhatsApp"}
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="px-5 py-3 border-t border-zinc-800 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsWhatsAppModalOpen(false)}
-                className="btn-secondary btn-sm"
-              >
-                Close
-              </button>
+                  <option value="Cash">Cash</option>
+                  <option value="UPI">UPI</option>
+                </Select>
+              </FormField>
             </div>
           </div>
-        </div>
-      )}
+
+          {/* SECTION 4: REVIEW SUMMARY & CONFIRMATION */}
+          <div className="p-5 rounded-xl bg-zinc-950 border border-zinc-700 flex flex-col gap-3">
+            <h3 className="text-base font-bold text-zinc-100">4. Review Summary</h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                <span className="text-xs text-zinc-400 block">Current Bill Total</span>
+                <span className="font-mono font-bold text-zinc-100 text-lg mt-1 block tabular-nums">
+                  {formatINR(billTotal)}
+                </span>
+              </div>
+              <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                <span className="text-xs text-zinc-400 block">Amount Paid Today</span>
+                <span className="font-mono font-bold text-emerald-400 text-lg mt-1 block tabular-nums">
+                  {formatINR(billMeta.amount_paid || 0)}
+                </span>
+              </div>
+              <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                <span className="text-xs text-zinc-400 block">Remaining Due</span>
+                <span className="font-mono font-bold text-amber-300 text-lg mt-1 block tabular-nums">
+                  {formatINR(billBalance)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setIsManualModalOpen(false)}
+              disabled={createMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="submit"
+              isLoading={createMutation.isPending}
+              loadingText="Saving bill…"
+            >
+              Create Bill
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* ─── RECORD PAYMENT MODAL ────────────────────────────────────── */}
       {paymentBill && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <div className="card w-full max-w-md">
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-              <div className="flex items-center gap-2 text-emerald-400">
-                <Wallet className="w-5 h-5" />
-                <h3 className="text-sm font-bold text-zinc-100">Record Bill Payment</h3>
+        <Modal
+          isOpen={Boolean(paymentBill)}
+          onClose={() => setPaymentBill(null)}
+          title="Record Payment"
+          subtitle={`Invoice #${paymentBill.bill_no} • ${paymentBill.customer_name}`}
+          maxWidth="max-w-md"
+        >
+          <form onSubmit={handlePaymentSubmit} className="flex flex-col gap-4">
+            <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col gap-2 text-sm">
+              <div className="flex justify-between text-zinc-400">
+                <span>Total Amount:</span>
+                <span className="font-mono font-semibold text-zinc-100">
+                  {formatINR(paymentBill.total_amount)}
+                </span>
               </div>
-              <button
-                onClick={() => setPaymentBill(null)}
-                className="text-zinc-400 hover:text-zinc-100 p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex justify-between text-zinc-400">
+                <span>Already Paid:</span>
+                <span className="font-mono font-semibold text-emerald-400">
+                  {formatINR(paymentBill.amount_paid)}
+                </span>
+              </div>
+              <div className="border-t border-zinc-800 pt-2 flex justify-between font-bold text-base">
+                <span className="text-amber-300">Remaining Balance:</span>
+                <span className="font-mono text-amber-300">
+                  {formatINR(paymentBill.balance_due)}
+                </span>
+              </div>
             </div>
 
-            <form onSubmit={handlePaymentSubmit} className="p-5 flex flex-col gap-4">
-              <div className="bg-zinc-950 p-3.5 rounded-lg border border-zinc-800 flex flex-col gap-1.5 text-xs">
-                <div className="flex justify-between text-zinc-400">
-                  <span>Customer:</span>
-                  <span className="font-semibold text-zinc-200">{paymentBill.customer_name}</span>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>Bill No:</span>
-                  <span className="font-mono text-zinc-200">{paymentBill.bill_no}</span>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>Total Amount:</span>
-                  <span className="font-mono text-zinc-200">{formatCurrency(paymentBill.total_amount)}</span>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>Already Paid:</span>
-                  <span className="font-mono text-emerald-400 font-semibold">{formatCurrency(paymentBill.amount_paid)}</span>
-                </div>
-                <div className="border-t border-zinc-800 pt-1.5 flex justify-between font-bold text-sm">
-                  <span className="text-amber-400">Remaining Balance:</span>
-                  <span className="font-mono text-amber-400">{formatCurrency(paymentBill.balance_due)}</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="label">
-                  Payment Amount (₹) *
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    step="any"
-                    required
-                    min="1"
-                    max={paymentBill.balance_due}
-                    value={paymentForm.installment_amount}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, installment_amount: e.target.value })}
-                    placeholder={`Max ₹${paymentBill.balance_due.toFixed(2)}`}
-                    className="input-field text-sm font-mono font-bold text-emerald-400 pr-20"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setPaymentForm({ ...paymentForm, installment_amount: paymentBill.balance_due.toString() })}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded hover:bg-emerald-500/25"
-                  >
-                    Pay Full
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="label">Payment Method</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {["Cash", "UPI"].map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setPaymentForm({ ...paymentForm, payment_method: m })}
-                      className={`p-2 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${paymentForm.payment_method === m
-                          ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
-                          : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200"
-                        }`}
-                    >
-                      {m === "Cash" ? <Banknote className="w-4 h-4" /> : <QrCode className="w-4 h-4" />}
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="label">Note / Reference (Optional)</label>
-                <input
-                  type="text"
-                  value={paymentForm.note}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, note: e.target.value })}
-                  placeholder="e.g. GPay ref, shop cash counter"
-                  className="input-field text-xs"
+            <FormField label="Payment Amount (₹)" required>
+              <div className="relative">
+                <Input
+                  type="number"
+                  step="any"
+                  min="1"
+                  max={paymentBill.balance_due}
+                  value={paymentForm.installment_amount}
+                  onChange={(e) =>
+                    setPaymentForm({ ...paymentForm, installment_amount: e.target.value })
+                  }
+                  placeholder={`Max ₹${paymentBill.balance_due?.toFixed(2)}`}
+                  className="font-mono font-bold text-emerald-400 pr-24"
+                  required
                 />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="absolute right-1 top-1/2 -translate-y-1/2"
+                  onClick={() =>
+                    setPaymentForm({
+                      ...paymentForm,
+                      installment_amount: paymentBill.balance_due?.toString() || "",
+                    })
+                  }
+                >
+                  Pay Full
+                </Button>
               </div>
+            </FormField>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setPaymentBill(null)}
-                  className="btn-secondary btn-sm"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={paymentMutation.isPending}
-                  className="btn-primary btn-sm flex items-center gap-1.5"
-                >
-                  <Wallet className="w-3.5 h-3.5" />
-                  <span>{paymentMutation.isPending ? "Recording..." : "Save Payment"}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            <FormField label="Payment Method">
+              <Select
+                value={paymentForm.payment_method}
+                onChange={(e) =>
+                  setPaymentForm({ ...paymentForm, payment_method: e.target.value })
+                }
+              >
+                <option value="Cash">Cash</option>
+                <option value="UPI">UPI</option>
+              </Select>
+            </FormField>
+
+            <FormField label="Note / Reference (Optional)">
+              <Input
+                placeholder="e.g. UPI Ref #, cash counter"
+                value={paymentForm.note}
+                onChange={(e) => setPaymentForm({ ...paymentForm, note: e.target.value })}
+              />
+            </FormField>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800 mt-2">
+              <Button
+                variant="secondary"
+                onClick={() => setPaymentBill(null)}
+                disabled={paymentMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                isLoading={paymentMutation.isPending}
+                loadingText="Recording payment…"
+              >
+                Save Payment
+              </Button>
+            </div>
+          </form>
+        </Modal>
       )}
 
-      {/* ─── VIEW BILL MODAL ─────────────────────────────────────────── */}
+      {/* ─── VIEW BILL DETAILS MODAL ─────────────────────────────────── */}
       {viewingBill && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <div className="card w-full max-w-2xl flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-              <div>
-                <h3 className="text-base font-bold text-zinc-100">Bill Details #{viewingBill.bill_no}</h3>
-                <p className="text-xs text-zinc-400 mt-0.5">{viewingBill.customer_name} · {formatDate(viewingBill.bill_date)}</p>
+        <Modal
+          isOpen={Boolean(viewingBill)}
+          onClose={() => setViewingBill(null)}
+          title={`Bill Details #${viewingBill.bill_no}`}
+          subtitle={`${viewingBill.customer_name} • ${formatDateIN(viewingBill.bill_date)}`}
+          maxWidth="max-w-2xl"
+        >
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                <span className="text-xs text-zinc-400 block">Total</span>
+                <span className="font-mono font-bold text-zinc-100 text-base mt-1 block">
+                  {formatINR(viewingBill.total_amount)}
+                </span>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleThermalPrint(viewingBill)}
-                  disabled={isThermalPrinting}
-                  className="btn-primary btn-sm text-xs flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500"
-                  title="Print to VYPRTP3001 (80mm Thermal Receipt)"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>{isThermalPrinting ? "Printing..." : "Thermal Print"}</span>
-                </button>
-                <button
-                  onClick={() => downloadBillPdf(viewingBill)}
-                  className="btn-secondary btn-sm text-xs flex items-center gap-1"
-                >
-                  <FileDown className="w-3.5 h-3.5" />
-                  <span>PDF</span>
-                </button>
-                <button
-                  onClick={() => setViewingBill(null)}
-                  className="text-zinc-400 hover:text-zinc-100 p-1"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                <span className="text-xs text-zinc-400 block">Paid</span>
+                <span className="font-mono font-bold text-emerald-400 text-base mt-1 block">
+                  {formatINR(viewingBill.amount_paid)}
+                </span>
+              </div>
+              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                <span className="text-xs text-zinc-400 block">Balance</span>
+                <span className="font-mono font-bold text-amber-300 text-base mt-1 block">
+                  {formatINR(viewingBill.balance_due)}
+                </span>
+              </div>
+              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                <span className="text-xs text-zinc-400 block">Method</span>
+                <span className="font-bold text-zinc-100 text-base mt-1 block">
+                  {viewingBill.payment_method || "Cash"}
+                </span>
               </div>
             </div>
 
-            <div className="p-5 flex flex-col gap-4 overflow-y-auto">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-                <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-                  <span className="text-zinc-400 block">Total</span>
-                  <span className="text-sm font-bold font-mono text-zinc-100 mt-1 block">{formatCurrency(viewingBill.total_amount)}</span>
-                </div>
-                <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-                  <span className="text-zinc-400 block">Paid</span>
-                  <span className="text-sm font-bold font-mono text-emerald-400 mt-1 block">{formatCurrency(viewingBill.amount_paid)}</span>
-                </div>
-                <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-                  <span className="text-zinc-400 block">Balance Due</span>
-                  <span className="text-sm font-bold font-mono text-amber-400 mt-1 block">{formatCurrency(viewingBill.balance_due)}</span>
-                </div>
-                <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-                  <span className="text-zinc-400 block">Method</span>
-                  <span className="text-sm font-bold text-zinc-200 mt-1 block">{viewingBill.payment_method || "Cash"}</span>
-                </div>
-              </div>
-
-              <div className="border border-zinc-800 rounded-lg overflow-hidden">
-                <table className="data-table text-xs">
-                  <thead>
-                    <tr>
-                      <th>Product</th>
-                      <th className="text-right">Quantity</th>
-                      <th className="text-right">Rate</th>
-                      <th className="text-right">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {viewingBill.items?.map((item) => (
-                      <tr key={item.id}>
-                        <td className="font-medium text-zinc-200">
-                          {item.product_name || "Custom Item"}
-                          {(item.is_live || item.circled_value) && (
-                            <span className="badge-green text-[10px] ml-2">⊚ Live</span>
+            <div className="border border-zinc-800 rounded-lg overflow-hidden">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th className="text-center">Type</th>
+                    <th className="text-right">Quantity</th>
+                    <th className="text-right">Rate</th>
+                    <th className="text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewingBill.items?.map((item) => {
+                    const isLive = Boolean(item.is_live || item.circled_value);
+                    return (
+                      <tr key={item.id} className={isLive ? "bg-emerald-950/20" : ""}>
+                        <td className="font-semibold text-zinc-100">{item.product_name}</td>
+                        <td className="text-center">
+                          {isLive ? (
+                            <span className="badge-success text-xs font-mono">⊚ Live</span>
+                          ) : (
+                            <span className="badge-neutral text-xs font-mono">Standard</span>
                           )}
                         </td>
-                        <td className="text-right font-mono">{item.quantity} {item.unit || "kg"}</td>
-                        <td className="text-right font-mono">₹{item.rate}</td>
-                        <td className="text-right font-mono font-semibold text-zinc-100">{formatCurrency(item.amount)}</td>
+                        <td className="text-right font-mono text-zinc-300">{item.quantity} {item.unit || "kg"}</td>
+                        <td className="text-right font-mono text-zinc-100">₹{item.rate}</td>
+                        <td className="cell-money">{formatINR(item.amount)}</td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {viewingBill.payment_history?.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <h4 className="text-xs font-semibold text-zinc-400 uppercase">Payment Collection History</h4>
-                  <div className="border border-zinc-800 rounded-lg overflow-hidden divide-y divide-zinc-800/60 text-xs">
-                    {viewingBill.payment_history.map((inst) => (
-                      <div key={inst.id} className="p-2.5 flex items-center justify-between bg-zinc-950">
-                        <div>
-                          <span className="font-semibold text-zinc-200 font-mono">₹{inst.amount.toFixed(2)}</span>
-                          <span className="text-zinc-400 ml-2">via {inst.payment_method}</span>
-                          {inst.note && <span className="text-zinc-400 italic ml-2">({inst.note})</span>}
-                        </div>
-                        <span className="text-zinc-400">{inst.paid_at ? formatDate(inst.paid_at) : ""}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
 
-            <div className="p-3 border-t border-zinc-800 text-right">
-              <button
-                onClick={() => setViewingBill(null)}
-                className="btn-secondary btn-sm"
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <Button
+                variant="secondary"
+                icon={Printer}
+                onClick={() => handleThermalPrint(viewingBill)}
               >
+                Thermal Print
+              </Button>
+              <Button
+                variant="secondary"
+                icon={FilePdf}
+                onClick={() => downloadBillPdf(viewingBill)}
+              >
+                Download PDF
+              </Button>
+              <Button variant="primary" onClick={() => setViewingBill(null)}>
                 Close
-              </button>
+              </Button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {/* ─── MANUAL BILL CREATION MODAL ──────────────────────────────── */}
-      {isManualModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-          <div className="card w-full max-w-3xl flex flex-col max-h-[92vh]">
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800 shrink-0">
-              <h3 className="text-sm font-bold text-zinc-100">Create New Bill</h3>
+      {/* ─── BULK WHATSAPP DISPATCH MODAL ───────────────────────────── */}
+      {isWhatsAppModalOpen && (
+        <Modal
+          isOpen={isWhatsAppModalOpen}
+          onClose={() => setIsWhatsAppModalOpen(false)}
+          title="Send WhatsApp Invoices"
+          subtitle="Send bills directly to customer WhatsApp with itemized breakdown and payment status."
+          maxWidth="max-w-2xl"
+        >
+          <div className="flex flex-col gap-4">
+            <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 flex items-start gap-3">
+              <WhatsappLogo size={24} className="text-emerald-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-zinc-300">
+                <p className="font-semibold text-zinc-100 mb-0.5">Automated Gateway & WhatsApp Web</p>
+                <p className="text-zinc-400">
+                  If an OpenWA or Meta Cloud WhatsApp gateway is active, invoices are delivered automatically.
+                  Otherwise, clicking &ldquo;Send Now&rdquo; will open WhatsApp Web or Desktop with the invoice pre-filled.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-zinc-400 pb-1 border-b border-zinc-800">
+              <span>Select bills to dispatch:</span>
               <button
-                onClick={() => setIsManualModalOpen(false)}
-                className="text-zinc-400 hover:text-zinc-100 p-1"
+                type="button"
+                onClick={() => {
+                  const withPhone = bills.filter((b) => b.customer_phone).map((b) => b.id);
+                  setSelectedBulkBillIds(selectedBulkBillIds.length === withPhone.length ? [] : withPhone);
+                }}
+                className="text-emerald-400 hover:text-emerald-300 font-medium"
               >
-                <X className="w-5 h-5" />
+                {selectedBulkBillIds.length === bills.filter((b) => b.customer_phone).length
+                  ? "Deselect All"
+                  : "Select All with Phone"}
               </button>
             </div>
 
-            <form onSubmit={handleManualSubmit} className="flex flex-col flex-1 overflow-hidden">
-              <div className="p-4 sm:p-5 flex-1 overflow-y-auto flex flex-col gap-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="label">Customer *</label>
-                    <select
-                      required
-                      value={billMeta.customer_id}
-                      onChange={(e) => handleCustomerChange(e.target.value)}
-                      className="input-field text-sm"
-                    >
-                      <option value="">Select Customer...</option>
-                      {customers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} {c.total_balance > 0 ? `(Due: ₹${c.total_balance})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    {billMeta.customer_id && (() => {
-                      const selCust = customers.find((c) => String(c.id) === String(billMeta.customer_id));
-                      if (!selCust) return null;
-                      const totBal = parseFloat(selCust.total_balance || 0);
-                      const openBal = parseFloat(selCust.opening_balance || 0);
-                      return totBal > 0 ? (
-                        <p className="text-xs text-amber-400 mt-1 font-mono font-medium flex items-center gap-1.5">
-                          <span>⚠️ Previous Balance Due: {formatCurrency(totBal)}</span>
-                          {openBal > 0 && selCust.bills_balance > 0 && (
-                            <span className="text-zinc-500 font-normal">
-                              (Prior Unbilled: {formatCurrency(openBal)})
-                            </span>
-                          )}
-                        </p>
-                      ) : (
-                        <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-                          <span>✓ No previous pending balance</span>
-                        </p>
-                      );
-                    })()}
-                  </div>
-                  <div>
-                    <label className="label">Bill Date *</label>
-                    <input
-                      type="date"
-                      required
-                      value={billMeta.bill_date}
-                      onChange={(e) => setBillMeta({ ...billMeta, bill_date: e.target.value })}
-                      className="input-field text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="label mb-0">Products & Quantities</label>
-                    {ratesLoading && <span className="text-xs text-zinc-500">Updating rates...</span>}
-                  </div>
-
-                  <div className="border border-zinc-800 rounded-lg overflow-x-auto">
-                    <table className="data-table text-xs min-w-[480px]">
-                      <thead>
-                        <tr>
-                          <th>Product</th>
-                          <th className="text-right w-24">Rate (₹)</th>
-                          <th className="text-right w-28">Quantity</th>
-                          <th className="text-right w-24">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {productRows.map((row, idx) => {
-                          const amt = (parseFloat(row.quantity) || 0) * (parseFloat(row.rate) || 0);
-                          return (
-                            <tr key={row.product_id}>
-                              <td className="font-medium text-zinc-200">
-                                {row.name}
-                                <span className="text-zinc-500 ml-1">({row.unit || "kg"})</span>
-                              </td>
-                              <td className="text-right">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  value={row.rate}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setProductRows((prev) =>
-                                      prev.map((r, i) => (i === idx ? { ...r, rate: val } : r))
-                                    );
-                                  }}
-                                  className="input-field text-xs text-right py-1 px-2 w-20"
-                                />
-                              </td>
-                              <td className="text-right">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  placeholder="0"
-                                  value={row.quantity}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setProductRows((prev) =>
-                                      prev.map((r, i) => (i === idx ? { ...r, quantity: val } : r))
-                                    );
-                                  }}
-                                  className="input-field text-xs text-right py-1 px-2 w-20 font-bold"
-                                />
-                              </td>
-                              <td className="text-right font-mono font-semibold text-zinc-100">
-                                {amt > 0 ? formatCurrency(amt) : "—"}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 flex flex-col gap-3">
-                  <div className="flex justify-between items-center text-sm font-bold">
-                    <span className="text-zinc-300">Total Amount:</span>
-                    <span className="font-mono text-emerald-400 text-base">{formatCurrency(billTotal)}</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-zinc-800 text-xs">
-                    <div>
-                      <label className="label">Amount Paid Now</label>
+            <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+              {bills.map((b) => {
+                const isSelected = selectedBulkBillIds.includes(b.id);
+                const hasPhone = Boolean(b.customer_phone);
+                return (
+                  <div
+                    key={b.id}
+                    className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
+                      isSelected
+                        ? "bg-emerald-950/20 border-emerald-500/50"
+                        : "bg-zinc-950/60 border-zinc-800/80 hover:border-zinc-700"
+                    }`}
+                  >
+                    <label className="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
                       <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        max={billTotal}
-                        value={billMeta.amount_paid}
-                        onChange={(e) => setBillMeta({ ...billMeta, amount_paid: e.target.value })}
-                        placeholder="₹0.00"
-                        className="input-field font-mono text-emerald-400"
+                        type="checkbox"
+                        checked={isSelected}
+                        disabled={!hasPhone}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedBulkBillIds([...selectedBulkBillIds, b.id]);
+                          } else {
+                            setSelectedBulkBillIds(selectedBulkBillIds.filter((id) => id !== b.id));
+                          }
+                        }}
+                        className="rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500/20"
                       />
-                    </div>
-                    <div>
-                      <label className="label">Payment Method</label>
-                      <select
-                        value={billMeta.payment_method}
-                        onChange={(e) => setBillMeta({ ...billMeta, payment_method: e.target.value })}
-                        className="input-field"
-                      >
-                        <option value="Cash">Cash</option>
-                        <option value="UPI">UPI</option>
-                      </select>
-                    </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-zinc-100 text-sm truncate">{b.customer_name}</span>
+                          <span className="text-xs font-mono text-zinc-400">#{b.bill_no}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-zinc-400 mt-0.5">
+                          <span>{hasPhone ? b.customer_phone : "No phone number"}</span>
+                          <span>•</span>
+                          <span className="font-mono text-emerald-400">{formatINR(b.total_amount)}</span>
+                          {b.balance_due > 0 && (
+                            <span className="text-amber-300 font-mono">({formatINR(b.balance_due)} due)</span>
+                          )}
+                        </div>
+                      </div>
+                    </label>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!hasPhone || sendingBillId === b.id}
+                      isLoading={sendingBillId === b.id}
+                      onClick={() => sendInvoiceWhatsApp(b)}
+                      className="shrink-0 text-xs text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/40"
+                    >
+                      Send Now
+                    </Button>
                   </div>
-
-                  <div className="flex justify-between items-center text-xs font-semibold pt-1 border-t border-zinc-800">
-                    <span className="text-zinc-400">Remaining Balance:</span>
-                    <span className="font-mono text-amber-400">{formatCurrency(billBalance)}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 border-t border-zinc-800 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsManualModalOpen(false)}
-                  className="btn-secondary btn-sm"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={createMutation.isPending || billTotal === 0}
-                  className="btn-primary btn-sm"
-                >
-                  {createMutation.isPending ? "Saving..." : "Save Bill"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ─── EDIT BILL MODAL ─────────────────────────────────────────── */}
-      {isEditBillModalOpen && editingBill && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-          <div className="card w-full max-w-3xl flex flex-col max-h-[92vh]">
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800 shrink-0">
-              <div className="flex items-center gap-2">
-                <PenSquare className="w-4 h-4 text-amber-400" />
-                <h3 className="text-sm font-bold text-zinc-100">Edit Bill #{editingBill.bill_no}</h3>
-              </div>
-              <button
-                onClick={() => setIsEditBillModalOpen(false)}
-                className="text-zinc-400 hover:text-zinc-100 p-1"
-              >
-                <X className="w-5 h-5" />
-              </button>
+                );
+              })}
             </div>
 
-            <form onSubmit={handleEditBillSubmit} className="flex flex-col flex-1 overflow-hidden">
-              <div className="p-4 sm:p-5 flex-1 overflow-y-auto flex flex-col gap-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="label">Customer *</label>
-                    <select
-                      required
-                      value={editBillMeta.customer_id}
-                      onChange={(e) => setEditBillMeta({ ...editBillMeta, customer_id: e.target.value })}
-                      className="input-field text-sm"
-                    >
-                      <option value="">Select Customer...</option>
-                      {customers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} {c.total_balance > 0 ? `(Due: ₹${c.total_balance})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label">Bill Date *</label>
-                    <input
-                      type="date"
-                      required
-                      value={editBillMeta.bill_date}
-                      onChange={(e) => setEditBillMeta({ ...editBillMeta, bill_date: e.target.value })}
-                      className="input-field text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="label mb-0">Edit Line Items</label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const fallbackProduct = products[0];
-                        setEditProductRows((prev) => [
-                          ...prev,
-                          {
-                            product_id: fallbackProduct?.id ?? "",
-                            name: fallbackProduct?.name || "Custom Item",
-                            unit: fallbackProduct?.unit || "kg",
-                            rate: String(fallbackProduct?.rate ?? 0),
-                            quantity: "0",
-                            tag: null,
-                            circled_value: null,
-                            confidence: 1,
-                            raw_text: null,
-                          },
-                        ]);
-                      }}
-                      className="btn-secondary btn-sm !py-1 !px-2 text-xs"
-                    >
-                      + Add Item
-                    </button>
-                  </div>
-
-                  <div className="border border-zinc-800 rounded-lg overflow-x-auto">
-                    <table className="data-table text-xs min-w-[480px]">
-                      <thead>
-                        <tr>
-                          <th>Product</th>
-                          <th className="text-right w-24">Rate (₹)</th>
-                          <th className="text-right w-28">Quantity</th>
-                          <th className="text-right w-24">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {editProductRows.map((row, idx) => {
-                          const amt = (parseFloat(row.quantity) || 0) * (parseFloat(row.rate) || 0);
-                          return (
-                            <tr key={`${row.product_id || "custom"}-${idx}`}>
-                              <td>
-                                <select
-                                  value={row.product_id}
-                                  onChange={(e) => {
-                                    const selected = products.find((p) => String(p.id) === e.target.value);
-                                    setEditProductRows((prev) => prev.map((item, i) =>
-                                      i === idx
-                                        ? {
-                                          ...item,
-                                          product_id: selected ? selected.id : "",
-                                          name: selected ? selected.name : item.name,
-                                          unit: selected ? selected.unit : item.unit,
-                                          rate: String(item.rate || 0),
-                                        }
-                                        : item
-                                    ));
-                                  }}
-                                  className="input-field text-xs py-1"
-                                >
-                                  <option value="">Custom Item</option>
-                                  {products.map((p) => (
-                                    <option key={p.id} value={p.id}>{p.name}</option>
-                                  ))}
-                                </select>
-                              </td>
-                              <td className="text-right">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  value={row.rate}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setEditProductRows((prev) =>
-                                      prev.map((r, i) => (i === idx ? { ...r, rate: val } : r))
-                                    );
-                                  }}
-                                  className="input-field text-xs text-right py-1 px-2 w-20"
-                                />
-                              </td>
-                              <td className="text-right">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  placeholder="0"
-                                  value={row.quantity}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setEditProductRows((prev) =>
-                                      prev.map((r, i) => (i === idx ? { ...r, quantity: val } : r))
-                                    );
-                                  }}
-                                  className="input-field text-xs text-right py-1 px-2 w-20 font-bold"
-                                />
-                              </td>
-                              <td className="text-right font-mono font-semibold text-zinc-100">
-                                {amt > 0 ? formatCurrency(amt) : "—"}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 flex flex-col gap-3">
-                  <div className="flex justify-between items-center text-sm font-bold">
-                    <span className="text-zinc-300">Total Amount:</span>
-                    <span className="font-mono text-amber-400 text-base">{formatCurrency(editBillTotal)}</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-zinc-800 text-xs">
-                    <div>
-                      <label className="label">Payment Method</label>
-                      <select
-                        value={editBillMeta.payment_method}
-                        onChange={(e) => setEditBillMeta({ ...editBillMeta, payment_method: e.target.value })}
-                        className="input-field"
-                      >
-                        <option value="Cash">Cash</option>
-                        <option value="UPI">UPI</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 border-t border-zinc-800 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditBillModalOpen(false)}
-                  className="btn-secondary btn-sm"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={updateBillMutation.isPending || editBillTotal === 0}
-                  className="btn-primary btn-sm bg-amber-600 hover:bg-amber-500"
-                >
-                  {updateBillMutation.isPending ? "Updating..." : "Save Changes"}
-                </button>
-              </div>
-            </form>
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <Button variant="secondary" onClick={() => setIsWhatsAppModalOpen(false)}>
+                Close
+              </Button>
+              <Button
+                variant="primary"
+                icon={PaperPlaneTilt}
+                disabled={selectedBulkBillIds.length === 0 || isBulkSending}
+                isLoading={isBulkSending}
+                loadingText="Dispatching batch…"
+                onClick={async () => {
+                  try {
+                    setIsBulkSending(true);
+                    const res = await api.post("/bills/bulk-whatsapp", {
+                      bill_ids: selectedBulkBillIds,
+                      delay_seconds: 2,
+                    });
+                    toast.success(
+                      `Dispatched ${res.data.sent} bills. Skipped ${res.data.skipped}. Failed ${res.data.failed}.`
+                    );
+                    setIsWhatsAppModalOpen(false);
+                    setSelectedBulkBillIds([]);
+                  } catch (err) {
+                    toast.error(err.response?.data?.detail || "Batch dispatch failed");
+                  } finally {
+                    setIsBulkSending(false);
+                  }
+                }}
+              >
+                Send Selected ({selectedBulkBillIds.length})
+              </Button>
+            </div>
           </div>
-        </div>
+        </Modal>
       )}
+
+      {/* ─── EXPLICIT NAMED DELETE CONFIRMATION (PRD v2 Section 11 #6) ── */}
+      <ConfirmDialog
+        isOpen={Boolean(billToDelete)}
+        onClose={() => setBillToDelete(null)}
+        recordName={`Bill #${billToDelete?.bill_no}`}
+        title="Delete Bill"
+        message={`Are you sure you want to permanently delete Bill #${billToDelete?.bill_no} for ${billToDelete?.customer_name}? Outstanding balances will be recalculated.`}
+        confirmText="Delete Bill"
+        isLoading={deleteMutation.isPending}
+        onConfirm={() => billToDelete && deleteMutation.mutate(billToDelete.id)}
+      />
     </div>
   );
 }

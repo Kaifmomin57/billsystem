@@ -2,17 +2,45 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Upload as UploadIcon, FileSpreadsheet, CheckCircle2, AlertTriangle,
-  Sparkles, RefreshCw, ZoomIn, ZoomOut, ArrowRight,
-  Trash2, Plus, Calendar, Eye, Camera, Check,
-  Maximize2, Minimize2, Receipt, X, ChevronRight,
-  Package, RotateCw, Expand, ChevronDown, ChevronUp,
-  Search, Undo2, Redo2,
-  Columns3, CheckCheck, Merge, ChevronLeft, ScanLine, Move
-} from "lucide-react";
+  UploadSimple as UploadIcon,
+  FileXls as FileSpreadsheet,
+  CheckCircle as CheckCircle2,
+  Warning as AlertTriangle,
+  Sparkle as Sparkles,
+  ArrowsClockwise as RefreshCw,
+  MagnifyingGlassPlus as ZoomIn,
+  MagnifyingGlassMinus as ZoomOut,
+  ArrowRight,
+  Trash as Trash2,
+  Plus,
+  CalendarBlank as Calendar,
+  Eye,
+  Camera,
+  Check,
+  ArrowsOut as Maximize2,
+  ArrowsIn as Minimize2,
+  Receipt,
+  X,
+  CaretRight as ChevronRight,
+  Package,
+  ArrowClockwise as RotateCw,
+  CornersOut as Expand,
+  CaretDown as ChevronDown,
+  CaretUp as ChevronUp,
+  MagnifyingGlass as Search,
+  ArrowCounterClockwise as Undo2,
+  ArrowClockwise as Redo2,
+  SquaresFour as Columns3,
+  Checks as CheckCheck,
+  ArrowsMerge as Merge,
+  CaretLeft as ChevronLeft,
+  Scan as ScanLine,
+  ArrowsOutCardinal as Move,
+} from "@phosphor-icons/react";
 import toast from "react-hot-toast";
-import api, { API_BASE_URL } from "../lib/api";
+import api, { API_BASE_URL, pollJob } from "../lib/api";
 import { formatCurrency, formatDate, formatDateTime, downloadBlob } from "../lib/utils";
+import { formatINR, formatDateIN } from "../lib/formatters";
 
 // ─── High-performance Client-Side Image Optimizer & Rotator ─────────────────
 const processImageFile = (file, rotationAngle = 0) => {
@@ -796,6 +824,8 @@ export default function UploadPage() {
   const [uploadType, setUploadType] = useState("ledger");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStep, setUploadStep] = useState(0);
+  const [activeJobProgress, setActiveJobProgress] = useState(0);
+  const [activeJobMessage, setActiveJobMessage] = useState("");
 
   // Fast client-side image optimization & rotation handlers
   const handleFileSelect = async (selectedFile) => {
@@ -877,6 +907,51 @@ export default function UploadPage() {
     },
     refetchIntervalInBackground: false,
   });
+
+  // PRD Section 7 & Section 2: Resume in-flight OCR job after browser refresh
+  useEffect(() => {
+    const savedJobStr = sessionStorage.getItem("active_ocr_job");
+    if (!savedJobStr) return;
+    try {
+      const savedJob = JSON.parse(savedJobStr);
+      if (savedJob?.jobId) {
+        setIsUploading(true);
+        setActiveJobProgress(savedJob.progress || 10);
+        setActiveJobMessage("Resuming background ledger scan…");
+        pollJob(savedJob.jobId, ({ progress, message }) => {
+          setActiveJobProgress(progress);
+          setActiveJobMessage(message);
+        })
+          .then((completedJob) => {
+            sessionStorage.removeItem("active_ocr_job");
+            const resData = typeof completedJob.result === "string" ? JSON.parse(completedJob.result) : completedJob.result;
+            if (resData) {
+              setActiveUploadId(resData.upload_id);
+              setActiveUploadStatus(resData.status || "needs_review");
+              setIsDraftDirty(true);
+              setActiveDraft(resData.draft_data);
+              setDraftHistory([JSON.parse(JSON.stringify(resData.draft_data))]);
+              setHistoryIndex(0);
+              setActiveDate(resData.page_date || new Date().toISOString().split("T")[0]);
+              const img = resData.image_url;
+              setPreviewUrl(img ? (img.startsWith("http") ? img : `${API_BASE_URL}${img}`) : null);
+              setShowBillPreview(false);
+              toast.success("Ledger scan completed!");
+              refetchUploads();
+            }
+          })
+          .catch((err) => {
+            sessionStorage.removeItem("active_ocr_job");
+            toast.error(err.message || "Background scan failed");
+          })
+          .finally(() => {
+            setIsUploading(false);
+          });
+      }
+    } catch {
+      sessionStorage.removeItem("active_ocr_job");
+    }
+  }, []);
 
   // Fetch tag dictionary for hover explanations
   const { data: tags = [] } = useQuery({
@@ -1358,44 +1433,53 @@ export default function UploadPage() {
     }
   };
 
-  // Upload and extract handler with multi-step feedback
+  // PRD Section 7 & Section 3 (#2): Upload and extract handler backed by durable background job
   const handleUploadSubmit = async () => {
     if (!file) return toast.error("Please select or capture a bill photo first");
     setIsUploading(true);
-    setUploadStep(0);
+    setActiveJobProgress(5);
+    setActiveJobMessage("Uploading document to secure gateway…");
 
     const formData = new FormData();
     formData.append("file", file);
     formData.append("upload_type", uploadType);
 
-    const stepInterval = setInterval(() => {
-      setUploadStep((s) => Math.min(s + 1, 3));
-    }, 1800);
-
     try {
-      const res = await api.post("/uploads", formData, {
+      // 1. Submit to /uploads/async -> Returns 202 Accepted with job_id
+      const res = await api.post("/uploads/async", formData, {
         headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120000,
+        timeout: 60000,
       });
-      clearInterval(stepInterval);
-      setUploadStep(4);
+
+      const { job_id, upload_id } = res.data;
+      sessionStorage.setItem("active_ocr_job", JSON.stringify({ jobId: job_id, uploadId: upload_id }));
+
+      // 2. Poll durable job endpoint until completion
+      const completedJob = await pollJob(job_id, ({ progress, message }) => {
+        setActiveJobProgress(progress);
+        setActiveJobMessage(message);
+      });
+
+      sessionStorage.removeItem("active_ocr_job");
       toast.success("Ledger extracted! Review your entries below.");
 
-      setActiveUploadId(res.data.id);
-      setActiveUploadStatus(res.data.status || "needs_review");
+      const resultPayload = typeof completedJob.result === "string" ? JSON.parse(completedJob.result) : completedJob.result;
+
+      setActiveUploadId(resultPayload.upload_id || upload_id);
+      setActiveUploadStatus(resultPayload.status || "needs_review");
       setIsDraftDirty(true);
-      setActiveDraft(res.data.draft_data);
-      setDraftHistory([JSON.parse(JSON.stringify(res.data.draft_data))]);
+      setActiveDraft(resultPayload.draft_data);
+      setDraftHistory([JSON.parse(JSON.stringify(resultPayload.draft_data))]);
       setHistoryIndex(0);
-      setActiveDate(res.data.page_date || new Date().toISOString().split("T")[0]);
-      const img = res.data.image_url;
+      setActiveDate(resultPayload.page_date || new Date().toISOString().split("T")[0]);
+      const img = resultPayload.image_url;
       setPreviewUrl(img ? (img.startsWith("http") ? img : `${API_BASE_URL}${img}`) : null);
       setFile(null);
       setOriginalFileSize(null);
       setShowBillPreview(false);
       refetchUploads();
     } catch (err) {
-      clearInterval(stepInterval);
+      sessionStorage.removeItem("active_ocr_job");
       const isTimeout = err.code === "ECONNABORTED" || err.message?.includes("timeout");
       const errorMsg = isTimeout
         ? "AI processing took longer than expected. Please retry."
@@ -1507,17 +1591,12 @@ export default function UploadPage() {
         onMerge={handleMergeRows}
       />
 
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* PRD v2 Page Header */}
+      <div className="page-header">
         <div>
-          <h1 className="text-lg sm:text-2xl font-bold text-zinc-100 tracking-tight">
-            Upload & Digitize Ledgers
-          </h1>
-          <p className="text-xs sm:text-sm text-zinc-400 mt-0.5 hidden sm:block">
-            Gemini AI handwriting OCR extracts customer quantities and auto-resolves database rates
-          </p>
-          <p className="text-xs text-zinc-400 mt-0.5 sm:hidden">
-            Scan ledger photos → AI extracts data → Create bills
+          <h1 className="page-title">Upload Ledger</h1>
+          <p className="page-purpose">
+            Photograph your handwritten ledger — Gemini AI extracts quantities, resolves rates, and creates bills automatically
           </p>
         </div>
       </div>
@@ -1651,11 +1730,28 @@ export default function UploadPage() {
               className="btn-primary w-full flex items-center justify-center gap-2 text-sm py-2.5 shadow-lg shadow-emerald-950/50 disabled:opacity-40"
             >
               {isUploading ? (
-                <><RefreshCw className="w-4 h-4 animate-spin" />Analyzing...</>
+                <><RefreshCw className="w-4 h-4 animate-spin text-emerald-300" />Scanning ({activeJobProgress}%)</>
               ) : (
                 <><Sparkles className="w-4 h-4" />Extract with AI</>
               )}
             </button>
+
+            {isUploading && (
+              <div className="p-3 rounded-xl bg-zinc-900/90 border border-emerald-500/30 flex flex-col gap-2 animate-in fade-in">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-300 font-medium truncate pr-2">
+                    {activeJobMessage || "Processing ledger in background…"}
+                  </span>
+                  <span className="font-mono text-emerald-400 font-bold shrink-0">{activeJobProgress}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
+                    style={{ width: `${Math.max(5, activeJobProgress)}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

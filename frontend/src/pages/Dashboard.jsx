@@ -1,40 +1,60 @@
 import { useState, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  IndianRupee, Upload,
-  Wallet, Clock, CheckCircle2, AlertCircle,
-  QrCode, Banknote, ArrowRight, Receipt, Plus
-} from "lucide-react";
+  CurrencyInr,
+  Wallet,
+  Clock,
+  Receipt,
+  Plus,
+  CloudArrowUp,
+  ArrowRight,
+  ArrowsClockwise,
+  CheckCircle,
+  WarningCircle,
+  Bank,
+  QrCode,
+  Money,
+} from "@phosphor-icons/react";
 import api from "../lib/api";
-import { formatCurrency, formatDate } from "../lib/utils";
+import { formatINR, formatDateIN } from "../lib/formatters";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Button } from "../components/ui/Button";
+import { StatusBadge } from "../components/ui/StatusBadge";
+import { CardSkeleton, TableSkeleton } from "../components/ui/Skeleton";
+import { EmptyState } from "../components/ui/EmptyState";
 import Pagination from "../components/Pagination";
 
 const BILLS_PAGE_SIZE = 5;
 
-function StatCard({ label, value, subtext, icon: Icon, badgeColor }) {
+function StatCard({ label, value, subtext, icon: Icon, badgeClasses }) {
   return (
     <div className="card p-5 flex flex-col justify-between">
       <div className="flex items-start justify-between">
         <div>
-          <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">{label}</span>
-          <div className="text-2xl sm:text-3xl font-bold font-mono tracking-tight text-zinc-100 mt-1">
+          <span className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">{label}</span>
+          <div className="text-2xl sm:text-3xl font-bold font-mono tracking-tight text-zinc-100 mt-1 tabular-nums">
             {value}
           </div>
         </div>
-        <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${badgeColor || "bg-zinc-800 text-zinc-400"}`}>
-          <Icon className="w-4 h-4" />
+        <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${badgeClasses || "bg-zinc-800 text-zinc-300"}`}>
+          <Icon size={24} weight="bold" />
         </div>
       </div>
-      {subtext && <p className="text-xs text-zinc-500 mt-3 pt-2 border-t border-zinc-800/60">{subtext}</p>}
+      {subtext && (
+        <p className="text-sm text-zinc-400 mt-3 pt-2.5 border-t border-zinc-800">
+          {subtext}
+        </p>
+      )}
     </div>
   );
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [billPage, setBillPage] = useState(1);
 
-  const { data: stats, isLoading } = useQuery({
+  const { data: stats, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["dashboard-stats"],
     queryFn: () => api.get("/stats/dashboard").then((r) => r.data),
     refetchInterval: 30_000,
@@ -64,89 +84,114 @@ export default function Dashboard() {
 
   const paidPercentage = totalBills > 0 ? Math.round((paidCount / totalBills) * 100) : 0;
 
+  const now = new Date();
+  const todayFormatted = now.toLocaleDateString("en-IN", {
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="card p-5 h-28 bg-zinc-900/60" />
-        ))}
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title="Financial Dashboard"
+          purpose="See today's business health and track collections"
+        />
+        <CardSkeleton count={4} />
+        <TableSkeleton rows={5} cols={6} />
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-zinc-100 tracking-tight">
-            Financial Dashboard
-          </h1>
-          <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
-            Overview of total sales, customer collections, and outstanding dues
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link to="/upload" className="btn-secondary text-xs sm:text-sm flex items-center gap-1.5">
-            <Upload className="w-4 h-4 text-emerald-400" />
-            <span>Upload Ledger</span>
-          </Link>
-          <Link to="/bills" className="btn-primary text-xs sm:text-sm flex items-center gap-1.5">
-            <Plus className="w-4 h-4" />
-            <span>New Bill</span>
-          </Link>
-        </div>
-      </div>
+      {/* PRD v2 Page Header */}
+      <PageHeader
+        title="Dashboard"
+        purpose={`Business health for ${todayFormatted} • Auto-refreshes every 30s`}
+        primaryAction={
+          <Button
+            variant="primary"
+            icon={Plus}
+            onClick={() => navigate("/bills?new=true")}
+          >
+            Create Bill
+          </Button>
+        }
+        secondaryAction={
+          <Button
+            variant="secondary"
+            icon={CloudArrowUp}
+            onClick={() => navigate("/upload")}
+          >
+            Upload Ledger
+          </Button>
+        }
+        moreActions={[
+          {
+            label: isFetching ? "Refreshing…" : "Refresh data",
+            icon: ArrowsClockwise,
+            onClick: () => refetch(),
+          },
+          {
+            label: "View reports",
+            icon: Receipt,
+            onClick: () => navigate("/reports"),
+          },
+        ]}
+      />
 
-      {/* 4 Core Financial Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+      {/* 4 Priority KPI Cards (PRD Section 12) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Total Sales"
-          value={formatCurrency(totalSales)}
-          subtext={`Today: ${formatCurrency(stats?.today_sales ?? 0)}`}
-          icon={IndianRupee}
-          badgeColor="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+          value={formatINR(totalSales)}
+          subtext={`Today: ${formatINR(stats?.today_sales ?? 0)}`}
+          icon={CurrencyInr}
+          badgeClasses="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
         />
         <StatCard
-          label="Received Payments"
-          value={formatCurrency(receivedPayment)}
-          subtext={`Today Inflow: ${formatCurrency(stats?.today_received ?? 0)}`}
+          label="Payments Received"
+          value={formatINR(receivedPayment)}
+          subtext={`Today Inflow: ${formatINR(stats?.today_received ?? 0)}`}
           icon={Wallet}
-          badgeColor="bg-sky-500/10 text-sky-400 border border-sky-500/20"
+          badgeClasses="bg-sky-500/10 text-sky-400 border border-sky-500/30"
         />
         <StatCard
           label="Outstanding Due"
-          value={formatCurrency(balancePayment)}
-          subtext={`${unpaidCount + partialCount} pending invoice(s)`}
+          value={formatINR(balancePayment)}
+          subtext={`${unpaidCount + partialCount} invoice(s) pending`}
           icon={Clock}
-          badgeColor="bg-amber-500/10 text-amber-400 border border-amber-500/20"
+          badgeClasses="bg-amber-500/10 text-amber-300 border border-amber-500/30"
         />
         <StatCard
-          label="Total Invoices"
+          label="Total Bills"
           value={totalBills}
-          subtext={`${stats?.total_customers ?? 0} registered customers`}
+          subtext={`${stats?.total_customers ?? 0} active customer(s)`}
           icon={Receipt}
-          badgeColor="bg-zinc-800 text-zinc-300 border border-zinc-700"
+          badgeClasses="bg-zinc-800 text-zinc-300 border border-zinc-700"
         />
       </div>
 
-      {/* 2-Column Focus Grid: Collection Health & Top Pending Debts */}
+      {/* 2-Column Priority Work Area: Collection Progress & Highest-due Customers */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Collection & Method Breakdown */}
         <div className="lg:col-span-5 card p-5 flex flex-col justify-between gap-5">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-              <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                Collection Progress
+              <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+                <CheckCircle size={20} weight="bold" className="text-emerald-400" />
+                <span>Collection Progress</span>
               </h2>
-              <span className="text-xs font-mono font-medium text-emerald-400">{paidPercentage}% Completed</span>
+              <span className="text-sm font-mono font-bold text-emerald-400">{paidPercentage}% Cleared</span>
             </div>
 
             <div className="mt-4 flex flex-col gap-3">
-              <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden flex">
+              <div className="w-full h-3 bg-zinc-800 rounded-full overflow-hidden flex">
                 <div
-                  className="bg-emerald-500 transition-all duration-300"
+                  className="bg-emerald-600 transition-all duration-300"
                   style={{ width: `${totalBills > 0 ? (paidCount / totalBills) * 100 : 0}%` }}
                   title={`Paid: ${paidCount}`}
                 />
@@ -162,88 +207,94 @@ export default function Dashboard() {
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-2 pt-1 text-xs">
-                <div className="p-2 rounded-lg bg-zinc-950 border border-zinc-800/80">
-                  <span className="text-emerald-400 font-medium block">● Paid</span>
-                  <span className="text-zinc-200 font-mono font-semibold mt-0.5 block">{paidCount} bills</span>
+              <div className="grid grid-cols-3 gap-2 pt-1 text-sm">
+                <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                  <span className="text-emerald-400 font-semibold block">● Paid</span>
+                  <span className="text-zinc-100 font-mono font-bold mt-1 block">{paidCount} bills</span>
                 </div>
-                <div className="p-2 rounded-lg bg-zinc-950 border border-zinc-800/80">
-                  <span className="text-amber-400 font-medium block">● Partial</span>
-                  <span className="text-zinc-200 font-mono font-semibold mt-0.5 block">{partialCount} bills</span>
+                <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                  <span className="text-amber-300 font-semibold block">● Partial</span>
+                  <span className="text-zinc-100 font-mono font-bold mt-1 block">{partialCount} bills</span>
                 </div>
-                <div className="p-2 rounded-lg bg-zinc-950 border border-zinc-800/80">
-                  <span className="text-rose-400 font-medium block">● Unpaid</span>
-                  <span className="text-zinc-200 font-mono font-semibold mt-0.5 block">{unpaidCount} bills</span>
+                <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                  <span className="text-rose-400 font-semibold block">● Due</span>
+                  <span className="text-zinc-100 font-mono font-bold mt-1 block">{unpaidCount} bills</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="pt-3 border-t border-zinc-800 grid grid-cols-2 gap-2 text-xs">
-            <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-              <div className="flex items-center gap-1.5 text-zinc-400">
-                <Banknote className="w-3.5 h-3.5 text-emerald-400" />
+          <div className="pt-3 border-t border-zinc-800 grid grid-cols-2 gap-3">
+            <div className="p-3.5 rounded-lg bg-zinc-950 border border-zinc-800">
+              <div className="flex items-center gap-2 text-zinc-400 text-sm">
+                <Money size={18} weight="bold" className="text-emerald-400" />
                 <span>Cash Receipts</span>
               </div>
-              <span className="text-zinc-100 font-mono font-semibold text-sm mt-1 block">
-                {formatCurrency(cashTotal)}
+              <span className="text-zinc-100 font-mono font-bold text-base mt-1.5 block tabular-nums">
+                {formatINR(cashTotal)}
               </span>
             </div>
-            <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-              <div className="flex items-center gap-1.5 text-zinc-400">
-                <QrCode className="w-3.5 h-3.5 text-sky-400" />
+            <div className="p-3.5 rounded-lg bg-zinc-950 border border-zinc-800">
+              <div className="flex items-center gap-2 text-zinc-400 text-sm">
+                <QrCode size={18} weight="bold" className="text-sky-400" />
                 <span>UPI Collections</span>
               </div>
-              <span className="text-zinc-100 font-mono font-semibold text-sm mt-1 block">
-                {formatCurrency(upiTotal)}
+              <span className="text-zinc-100 font-mono font-bold text-base mt-1.5 block tabular-nums">
+                {formatINR(upiTotal)}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Top Pending Customers */}
+        {/* Top Outstanding Customers (Highest-due with Collect payment action) */}
         <div className="lg:col-span-7 card p-5 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-              <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-400" />
-                Outstanding Customer Balances
+              <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+                <WarningCircle size={20} weight="bold" className="text-amber-400" />
+                <span>Highest-Due Customers</span>
               </h2>
-              <Link to="/bills?status=due" className="text-xs text-emerald-400 hover:text-emerald-300 font-medium">
-                View all dues →
+              <Link
+                to="/bills?status=due"
+                className="text-sm text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1"
+              >
+                <span>View all dues</span>
+                <ArrowRight size={16} weight="bold" />
               </Link>
             </div>
 
-            <div className="mt-2">
+            <div className="mt-3">
               {topDebtors.length > 0 ? (
                 <>
-                  {/* Desktop Table */}
+                  {/* Desktop Table (52px row height) */}
                   <div className="hidden md:block overflow-x-auto">
-                    <table className="data-table text-xs">
+                    <table className="data-table">
                       <thead>
                         <tr>
                           <th>Customer</th>
-                          <th className="text-center">Unpaid Bills</th>
+                          <th className="text-center">Pending Bills</th>
                           <th className="text-right">Balance Due</th>
                           <th className="text-right">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {topDebtors.slice(0, 5).map((d) => (
-                          <tr key={d.customer_id}>
-                            <td className="font-medium text-zinc-200">{d.customer_name}</td>
-                            <td className="text-center font-mono text-zinc-400">{d.unpaid_bills}</td>
-                            <td className="text-right font-mono font-bold text-amber-400">
-                              {formatCurrency(d.total_due)}
+                          <tr key={d.customer_id} className="min-h-[52px]">
+                            <td className="font-semibold text-zinc-100 text-base">{d.customer_name}</td>
+                            <td className="text-center font-mono text-zinc-300 text-base">{d.unpaid_bills}</td>
+                            <td className="text-right cell-money text-amber-300 font-bold text-base">
+                              {formatINR(d.total_due)}
                             </td>
                             <td className="text-right">
-                              <Link
-                                to={`/bills?customer_id=${d.customer_id}`}
-                                className="btn-ghost btn-sm text-xs text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1"
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={ArrowRight}
+                                iconPosition="right"
+                                onClick={() => navigate(`/bills?customer_id=${d.customer_id}`)}
                               >
-                                <span>Collect</span>
-                                <ArrowRight className="w-3 h-3" />
-                              </Link>
+                                Collect
+                              </Button>
                             </td>
                           </tr>
                         ))}
@@ -251,35 +302,35 @@ export default function Dashboard() {
                     </table>
                   </div>
 
-                  {/* Mobile Compact Cards */}
-                  <div className="block md:hidden divide-y divide-zinc-800/80">
+                  {/* Mobile Compact Cards (44px min targets) */}
+                  <div className="block md:hidden divide-y divide-zinc-800">
                     {topDebtors.slice(0, 5).map((d) => (
-                      <div key={d.customer_id} className="py-2.5 flex items-center justify-between gap-2">
+                      <div key={d.customer_id} className="py-3 flex items-center justify-between gap-3">
                         <div>
-                          <div className="font-medium text-zinc-200 text-xs">{d.customer_name}</div>
-                          <div className="text-[11px] text-zinc-500 font-mono mt-0.5">
-                            {d.unpaid_bills} unpaid {d.unpaid_bills === 1 ? "bill" : "bills"}
+                          <div className="font-semibold text-zinc-100 text-base">{d.customer_name}</div>
+                          <div className="text-xs text-zinc-400 font-mono mt-0.5">
+                            {d.unpaid_bills} pending {d.unpaid_bills === 1 ? "bill" : "bills"}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2.5">
-                          <span className="font-mono font-bold text-amber-400 text-xs">
-                            {formatCurrency(d.total_due)}
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono font-bold text-amber-300 text-base tabular-nums">
+                            {formatINR(d.total_due)}
                           </span>
-                          <Link
-                            to={`/bills?customer_id=${d.customer_id}`}
-                            className="btn-secondary btn-sm !py-1 !px-2 text-xs text-emerald-400 inline-flex items-center gap-1"
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => navigate(`/bills?customer_id=${d.customer_id}`)}
                           >
-                            <span>Collect</span>
-                            <ArrowRight className="w-3 h-3" />
-                          </Link>
+                            Collect
+                          </Button>
                         </div>
                       </div>
                     ))}
                   </div>
                 </>
               ) : (
-                <div className="py-8 text-center text-zinc-500 text-xs">
-                  No outstanding customer balances. All payments collected!
+                <div className="py-10 text-center text-zinc-400 text-base">
+                  No outstanding balances. All customer payments are up to date!
                 </div>
               )}
             </div>
@@ -291,21 +342,29 @@ export default function Dashboard() {
       <div className="card overflow-hidden">
         <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-bold text-zinc-100">Recent Invoices</h2>
-            <p className="text-xs text-zinc-400 mt-0.5">Latest billing activity recorded in the system</p>
+            <h2 className="text-lg font-bold text-zinc-100">Recent Bills</h2>
+            <p className="text-sm text-zinc-400 mt-0.5">Latest billing transactions recorded</p>
           </div>
-          <Link to="/bills" className="btn-secondary btn-sm text-xs">
-            View All Invoices
-          </Link>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => navigate("/bills")}
+          >
+            View All Bills
+          </Button>
         </div>
 
         {recentBills.length === 0 ? (
-          <div className="py-12 text-center text-zinc-500 text-sm">
-            No bills recorded yet.
-          </div>
+          <EmptyState
+            icon={Receipt}
+            title="No bills recorded yet"
+            description="Create your first bill or upload a handwritten ledger photo to get started."
+            actionLabel="Create First Bill"
+            onAction={() => navigate("/bills?new=true")}
+          />
         ) : (
           <>
-            {/* Desktop Table */}
+            {/* Desktop Table (52px row height, 16px text) */}
             <div className="hidden md:block overflow-x-auto">
               <table className="data-table">
                 <thead>
@@ -316,45 +375,33 @@ export default function Dashboard() {
                     <th>Method</th>
                     <th className="text-right">Total</th>
                     <th className="text-right">Paid</th>
-                    <th className="text-right">Balance</th>
+                    <th className="text-right">Balance Due</th>
                     <th className="text-center">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedBills.map((bill) => {
-                    const isPaid = bill.payment_status === "paid";
-                    const isPartial = bill.payment_status === "partial";
                     return (
-                      <tr key={bill.id}>
-                        <td className="font-mono text-xs font-semibold text-zinc-300">#{bill.bill_no}</td>
-                        <td className="font-medium text-zinc-100">{bill.customer_name}</td>
-                        <td className="text-xs text-zinc-400">{formatDate(bill.bill_date)}</td>
+                      <tr key={bill.id} className="min-h-[52px]">
+                        <td className="font-mono font-bold text-zinc-300 text-base">#{bill.bill_no}</td>
+                        <td className="font-semibold text-zinc-100 text-base">{bill.customer_name}</td>
+                        <td className="cell-secondary">{formatDateIN(bill.bill_date)}</td>
                         <td>
-                          <span className="badge-zinc text-[10px]">
+                          <span className="badge-neutral text-xs">
                             {bill.payment_method || "Cash"}
                           </span>
                         </td>
-                        <td className="text-right font-mono text-zinc-200">{formatCurrency(bill.total_amount)}</td>
-                        <td className="text-right font-mono text-emerald-400">{formatCurrency(bill.amount_paid)}</td>
-                        <td className="text-right font-mono">
+                        <td className="cell-money text-zinc-100 text-base">{formatINR(bill.total_amount)}</td>
+                        <td className="cell-money text-emerald-400 text-base">{formatINR(bill.amount_paid)}</td>
+                        <td className="cell-money text-base">
                           {bill.balance_due > 0 ? (
-                            <span className="text-amber-400 font-semibold">{formatCurrency(bill.balance_due)}</span>
+                            <span className="text-amber-300 font-bold">{formatINR(bill.balance_due)}</span>
                           ) : (
-                            <span className="text-zinc-500">₹0</span>
+                            <span className="text-zinc-500">₹0.00</span>
                           )}
                         </td>
                         <td className="text-center">
-                          <span
-                            className={
-                              isPaid
-                                ? "badge-green"
-                                : isPartial
-                                ? "badge-yellow"
-                                : "badge-red"
-                            }
-                          >
-                            {isPaid ? "Paid" : isPartial ? "Partial" : "Unpaid"}
-                          </span>
+                          <StatusBadge status={bill.payment_status} />
                         </td>
                       </tr>
                     );
@@ -363,64 +410,49 @@ export default function Dashboard() {
               </table>
             </div>
 
-            {/* Mobile Card List (< md) */}
-            <div className="block md:hidden divide-y divide-zinc-800/80">
-              {paginatedBills.map((bill) => {
-                const isPaid = bill.payment_status === "paid";
-                const isPartial = bill.payment_status === "partial";
+            {/* Mobile Card List */}
+            <div className="block md:hidden divide-y divide-zinc-800">
+              {paginatedBills.map((bill) => (
+                <div key={bill.id} className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-zinc-100 text-base">#{bill.bill_no}</span>
+                      <span className="text-xs text-zinc-400">{formatDateIN(bill.bill_date)}</span>
+                    </div>
+                    <StatusBadge status={bill.payment_status} />
+                  </div>
 
-                return (
-                  <div key={bill.id} className="p-4 flex flex-col gap-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-zinc-200">#{bill.bill_no}</span>
-                        <span className="text-[11px] text-zinc-500">{formatDate(bill.bill_date)}</span>
-                      </div>
-                      <span
-                        className={
-                          isPaid
-                            ? "badge-green text-[10px]"
-                            : isPartial
-                            ? "badge-yellow text-[10px]"
-                            : "badge-red text-[10px]"
-                        }
-                      >
-                        {isPaid ? "Paid" : isPartial ? "Partial" : "Unpaid"}
+                  <div className="flex items-center justify-between text-base">
+                    <span className="font-semibold text-zinc-100">{bill.customer_name}</span>
+                    <span className="badge-neutral text-xs">{bill.payment_method || "Cash"}</span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-sm">
+                    <div>
+                      <span className="text-xs text-zinc-400 block">Total</span>
+                      <span className="font-mono font-bold text-zinc-100 mt-0.5 block tabular-nums">
+                        {formatINR(bill.total_amount)}
                       </span>
                     </div>
-
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium text-zinc-100">{bill.customer_name}</span>
-                      <span className="badge-zinc text-[10px]">{bill.payment_method || "Cash"}</span>
+                    <div>
+                      <span className="text-xs text-zinc-400 block">Paid</span>
+                      <span className="font-mono font-semibold text-emerald-400 mt-0.5 block tabular-nums">
+                        {formatINR(bill.amount_paid)}
+                      </span>
                     </div>
-
-                    <div className="grid grid-cols-3 gap-2 p-2 rounded bg-zinc-950/70 border border-zinc-800/70 text-xs">
-                      <div>
-                        <span className="text-[10px] text-zinc-500 block">Total</span>
-                        <span className="font-mono font-medium text-zinc-200 mt-0.5 block">
-                          {formatCurrency(bill.total_amount)}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-zinc-500 block">Paid</span>
-                        <span className="font-mono text-zinc-400 mt-0.5 block">
-                          {formatCurrency(bill.amount_paid)}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-zinc-500 block">Balance</span>
-                        <span
-                          className={`font-mono font-bold mt-0.5 block ${
-                            bill.balance_due > 0 ? "text-amber-400" : "text-zinc-500"
-                          }`}
-                        >
-                          {bill.balance_due > 0 ? formatCurrency(bill.balance_due) : "₹0"}
-                        </span>
-                      </div>
+                    <div>
+                      <span className="text-xs text-zinc-400 block">Balance</span>
+                      <span
+                        className={`font-mono font-bold mt-0.5 block tabular-nums ${
+                          bill.balance_due > 0 ? "text-amber-300" : "text-zinc-500"
+                        }`}
+                      >
+                        {bill.balance_due > 0 ? formatINR(bill.balance_due) : "₹0.00"}
+                      </span>
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
 
             <Pagination

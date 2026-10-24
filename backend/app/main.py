@@ -1,15 +1,18 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.database import Base, engine, SessionLocal
 from app.core.security import get_password_hash
+from app.core.signing import verify_signed_url
+from app.core.middleware import RequestIDMiddleware, RequestSizeLimitMiddleware, RateLimitMiddleware
 from app.models.models import User, TagDictionary
 
 # Import routers
-from app.api.routes import auth, customers, products, rates, bills, uploads, settings as settings_route, reports, stats
+from app.api.routes import auth, customers, products, rates, bills, uploads, settings as settings_route, reports, stats, jobs
 
 settings = get_settings()
 
@@ -43,7 +46,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "Retry-After", "Content-Disposition"],
 )
+
+# Gateway Protection Middlewares (PRD Section 5.1, 5.2)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware)
+app.add_middleware(RequestIDMiddleware)
 
 # GZip compression (compresses responses over 1KB, speeding up API downloads over network)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -62,6 +71,34 @@ def health_check():
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
+# Time-limited signed download endpoint (PRD Section 9 & Section 3 #5)
+@app.get("/secure-media/{file_path:path}", tags=["media"])
+def get_secure_media(file_path: str, expires: int, sig: str):
+    """
+    Verifies HMAC signature and 15-minute expiration before serving private files.
+    """
+    if not verify_signed_url(file_path, expires, sig):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signed URL has expired or signature is invalid."
+        )
+
+    clean_path = file_path.strip().lstrip("/").replace("\\", "/")
+    full_path = os.path.normpath(os.path.join(settings.UPLOAD_DIR, clean_path))
+    upload_abs = os.path.abspath(settings.UPLOAD_DIR)
+    if not os.path.abspath(full_path).startswith(upload_abs):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requested file not found.")
+
+    filename = os.path.basename(full_path)
+    return FileResponse(
+        path=full_path,
+        filename=filename,
+        media_type="application/octet-stream"
+    )
+
 # Include API routers
 app.include_router(auth.router)
 app.include_router(customers.router)
@@ -72,6 +109,7 @@ app.include_router(uploads.router)
 app.include_router(settings_route.router)
 app.include_router(reports.router)
 app.include_router(stats.router)
+app.include_router(jobs.router)
 
 
 def _run_schema_migrations():
@@ -98,6 +136,15 @@ def _run_schema_migrations():
             ),
             "sqlite_add": "ALTER TABLE products ADD COLUMN product_code VARCHAR(50);",
             "description": "Add product_code to products table",
+        },
+        {
+            "pg": "ALTER TABLE products ADD COLUMN IF NOT EXISTS purchase_price NUMERIC(12, 2);",
+            "sqlite_check": (
+                "SELECT COUNT(*) FROM pragma_table_info('products') "
+                "WHERE name='purchase_price';"
+            ),
+            "sqlite_add": "ALTER TABLE products ADD COLUMN purchase_price NUMERIC(12, 2);",
+            "description": "Add purchase_price to products table",
         },
         {
             "pg": "ALTER TABLE product_rates ADD COLUMN IF NOT EXISTS live_rate NUMERIC(12, 2);",

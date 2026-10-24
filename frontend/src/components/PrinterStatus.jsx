@@ -1,5 +1,5 @@
 import React from "react";
-import { Bluetooth, Cable, RefreshCw, CheckCircle2 } from "lucide-react";
+import { Bluetooth, Plug, ArrowsClockwise, CheckCircle } from "@phosphor-icons/react";
 import { PRINTER_MODES } from "../printer/printerService";
 
 export default function PrinterStatus({ status, onRefresh }) {
@@ -25,7 +25,7 @@ export default function PrinterStatus({ status, onRefresh }) {
             {isBluetooth ? (
               <Bluetooth className="w-6 h-6" />
             ) : (
-              <Cable className="w-6 h-6" />
+              <Plug className="w-6 h-6" />
             )}
           </div>
 
@@ -55,7 +55,7 @@ export default function PrinterStatus({ status, onRefresh }) {
               </span>
 
               <span className="px-2 py-0.5 rounded-md font-medium border bg-emerald-500/10 text-emerald-400 border-emerald-500/30 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" />
+                <CheckCircle className="w-3.5 h-3.5" />
                 100% In-Browser (No App Needed)
               </span>
 
@@ -80,7 +80,7 @@ export default function PrinterStatus({ status, onRefresh }) {
             className="btn btn-secondary btn-sm self-start sm:self-center"
             title="Refresh status"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <ArrowsClockwise className="w-3.5 h-3.5" />
             <span>Check Status</span>
           </button>
         )}
