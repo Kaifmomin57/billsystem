@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
     Customer, CustomerRate, CustomerAlias, RateHistory,
-    Bill, BillItem, PaymentInstallment,
+    Bill, BillItem, PaymentInstallment, AppSetting
 )
 
 router = APIRouter(prefix="/customers", tags=["customers"])
@@ -115,7 +115,11 @@ def get_customer(customer_id: int, db: Session = Depends(get_db), _=Depends(get_
 
 @router.post("", status_code=201)
 def create_customer(body: CustomerIn, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    c = Customer(**body.model_dump())
+    data = body.model_dump()
+    if not (data.get("phone") or "").strip():
+        setting = db.query(AppSetting).filter(AppSetting.key == "default_customer_phone").first()
+        data["phone"] = setting.value if setting and setting.value else "9730526659"
+    c = Customer(**data)
     db.add(c); db.commit(); db.refresh(c)
     op = float(c.opening_balance or 0.0)
     return {

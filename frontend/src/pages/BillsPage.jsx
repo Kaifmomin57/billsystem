@@ -417,10 +417,19 @@ export default function BillsPage() {
       return;
     }
 
+    const selCust = customers.find((c) => String(c.id) === String(billMeta.customer_id));
+    const prevDue = parseFloat(selCust?.total_balance || 0);
+    const maxAllowed = billTotal + prevDue;
+    const paidAmt = parseFloat(billMeta.amount_paid || 0);
+    if (paidAmt > maxAllowed + 0.001) {
+      toast.error(`Amount paid cannot exceed total balance ₹${maxAllowed.toFixed(2)} (Current: ₹${billTotal.toFixed(2)} + Previous: ₹${prevDue.toFixed(2)})`);
+      return;
+    }
+
     createMutation.mutate({
       customer_id: parseInt(billMeta.customer_id),
       bill_date: billMeta.bill_date,
-      amount_paid: parseFloat(billMeta.amount_paid || 0),
+      amount_paid: paidAmt,
       payment_method: billMeta.payment_method || "Cash",
       items: itemsToSave,
       source: "manual",
@@ -572,12 +581,21 @@ export default function BillsPage() {
       return;
     }
 
+    const selCust = customers.find((c) => String(c.id) === String(editBillMeta.customer_id));
+    const prevDue = parseFloat(editingBill?.previous_balance || selCust?.total_balance || 0);
+    const maxAllowed = editBillTotal + prevDue;
+    const paidAmt = parseFloat(editBillMeta.amount_paid || 0);
+    if (paidAmt > maxAllowed + 0.001) {
+      toast.error(`Amount paid cannot exceed total balance ₹${maxAllowed.toFixed(2)} (Current: ₹${editBillTotal.toFixed(2)} + Previous: ₹${prevDue.toFixed(2)})`);
+      return;
+    }
+
     updateBillMutation.mutate({
       billId: editingBill.id,
       payload: {
         customer_id: parseInt(editBillMeta.customer_id),
         bill_date: editBillMeta.bill_date,
-        amount_paid: parseFloat(editBillMeta.amount_paid || 0),
+        amount_paid: paidAmt,
         payment_method: editBillMeta.payment_method || "Cash",
         items: itemsToSave,
       },
@@ -606,6 +624,13 @@ export default function BillsPage() {
     const amt = parseFloat(paymentForm.installment_amount || 0);
     if (amt <= 0) {
       toast.error("Please enter a valid amount greater than zero");
+      return;
+    }
+    const pbCurrBal = parseFloat(paymentBill.balance_due || 0);
+    const pbPrevBal = parseFloat(paymentBill.previous_balance || 0);
+    const maxAmt = parseFloat(paymentBill.total_due_with_carry_forward || (pbCurrBal + pbPrevBal));
+    if (amt > maxAmt + 0.001) {
+      toast.error(`Maximum allowed payment is ₹${maxAmt.toFixed(2)} (Current: ₹${pbCurrBal.toFixed(2)} + Previous: ₹${pbPrevBal.toFixed(2)}). Cannot exceed total due.`);
       return;
     }
     paymentMutation.mutate({
@@ -889,6 +914,12 @@ export default function BillsPage() {
                           ) : (
                             <span className="text-zinc-500">₹0.00</span>
                           )}
+                          {b.previous_balance > 0.009 && (
+                            <span className="block text-[11px] font-normal text-amber-400/90 mt-0.5">
+                              + Prev: {formatINR(b.previous_balance)}
+                              <span className="block text-[10px] text-zinc-400">Total: {formatINR(b.total_due_with_carry_forward)}</span>
+                            </span>
+                          )}
                         </td>
 
                         <td className="text-center">
@@ -1015,6 +1046,11 @@ export default function BillsPage() {
                         >
                           {b.balance_due > 0 ? formatINR(b.balance_due) : "₹0.00"}
                         </span>
+                        {b.previous_balance > 0.009 && (
+                          <span className="text-[10px] text-amber-400 block mt-0.5">
+                            + Prev: {formatINR(b.previous_balance)}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -1313,7 +1349,6 @@ export default function BillsPage() {
                   type="number"
                   step="any"
                   min="0"
-                  max={billTotal}
                   value={billMeta.amount_paid}
                   onChange={(e) => setBillMeta({ ...billMeta, amount_paid: e.target.value })}
                   placeholder="₹0.00"
@@ -1330,6 +1365,15 @@ export default function BillsPage() {
                   <option value="UPI">UPI</option>
                 </Select>
               </FormField>
+
+              {parseFloat(billMeta.amount_paid || 0) > billTotal && (
+                <div className="col-span-1 sm:col-span-2 p-3 rounded-lg bg-emerald-950/30 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2">
+                  <CheckCircle size={16} className="text-emerald-400 shrink-0" />
+                  <span>
+                    <strong>{formatINR(parseFloat(billMeta.amount_paid || 0) - billTotal)} extra payment</strong> will be automatically deducted from customer&apos;s older pending bills!
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1337,26 +1381,42 @@ export default function BillsPage() {
           <div className="p-5 rounded-xl bg-zinc-950 border border-zinc-700 flex flex-col gap-3">
             <h3 className="text-base font-bold text-zinc-100">4. Review Summary</h3>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-              <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
-                <span className="text-xs text-zinc-400 block">Current Bill Total</span>
-                <span className="font-mono font-bold text-zinc-100 text-lg mt-1 block tabular-nums">
-                  {formatINR(billTotal)}
-                </span>
-              </div>
-              <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
-                <span className="text-xs text-zinc-400 block">Amount Paid Today</span>
-                <span className="font-mono font-bold text-emerald-400 text-lg mt-1 block tabular-nums">
-                  {formatINR(billMeta.amount_paid || 0)}
-                </span>
-              </div>
-              <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
-                <span className="text-xs text-zinc-400 block">Remaining Due</span>
-                <span className="font-mono font-bold text-amber-300 text-lg mt-1 block tabular-nums">
-                  {formatINR(billBalance)}
-                </span>
-              </div>
-            </div>
+            {(() => {
+              const selCust = customers.find((c) => String(c.id) === String(billMeta.customer_id));
+              const prevDue = parseFloat(selCust?.total_balance || 0);
+              const paidNow = parseFloat(billMeta.amount_paid || 0);
+              const grandTotal = billTotal + prevDue;
+              const netDue = Math.max(0, grandTotal - paidNow);
+
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                  <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                    <span className="text-xs text-zinc-400 block">Current Bill</span>
+                    <span className="font-mono font-bold text-zinc-100 text-lg mt-1 block tabular-nums">
+                      {formatINR(billTotal)}
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                    <span className="text-xs text-zinc-400 block">Previous Pending</span>
+                    <span className="font-mono font-bold text-amber-400 text-lg mt-1 block tabular-nums">
+                      {formatINR(prevDue)}
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                    <span className="text-xs text-zinc-400 block">Amount Paid</span>
+                    <span className="font-mono font-bold text-emerald-400 text-lg mt-1 block tabular-nums">
+                      {formatINR(paidNow)}
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                    <span className="text-xs text-zinc-400 block">Total Net Due</span>
+                    <span className={`font-mono font-bold text-lg mt-1 block tabular-nums ${netDue > 0 ? "text-rose-400" : "text-emerald-400"}`}>
+                      {formatINR(netDue)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Actions */}
@@ -1595,7 +1655,6 @@ export default function BillsPage() {
                     type="number"
                     step="any"
                     min="0"
-                    max={editBillTotal}
                     value={editBillMeta.amount_paid}
                     onChange={(e) => setEditBillMeta({ ...editBillMeta, amount_paid: e.target.value })}
                     placeholder="₹0.00"
@@ -1612,6 +1671,15 @@ export default function BillsPage() {
                     <option value="UPI">UPI</option>
                   </Select>
                 </FormField>
+
+                {parseFloat(editBillMeta.amount_paid || 0) > editBillTotal && (
+                  <div className="col-span-1 sm:col-span-2 p-3 rounded-lg bg-emerald-950/30 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2">
+                    <CheckCircle size={16} className="text-emerald-400 shrink-0" />
+                    <span>
+                      <strong>{formatINR(parseFloat(editBillMeta.amount_paid || 0) - editBillTotal)} extra payment</strong> will be automatically deducted from customer&apos;s older pending bills!
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1668,106 +1736,283 @@ export default function BillsPage() {
         </Modal>
       )}
 
-      {/* ─── RECORD PAYMENT MODAL ────────────────────────────────────── */}
+      {/* ─── RECORD PAYMENT MODAL (Executive Redesign) ────────────────── */}
       {paymentBill && (
         <Modal
           isOpen={Boolean(paymentBill)}
           onClose={() => setPaymentBill(null)}
           title="Record Payment"
-          subtitle={`Invoice #${paymentBill.bill_no} • ${paymentBill.customer_name}`}
-          maxWidth="max-w-md"
+          subtitle={`Invoice #${paymentBill.bill_no} • ${paymentBill.customer_name || "Customer"}`}
+          maxWidth="max-w-lg"
         >
-          <form onSubmit={handlePaymentSubmit} className="flex flex-col gap-4">
-            <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col gap-2 text-sm">
-              <div className="flex justify-between text-zinc-400">
-                <span>Total Amount:</span>
-                <span className="font-mono font-semibold text-zinc-100">
-                  {formatINR(paymentBill.total_amount)}
-                </span>
-              </div>
-              <div className="flex justify-between text-zinc-400">
-                <span>Already Paid:</span>
-                <span className="font-mono font-semibold text-emerald-400">
-                  {formatINR(paymentBill.amount_paid)}
-                </span>
-              </div>
-              <div className="border-t border-zinc-800 pt-2 flex justify-between font-bold text-base">
-                <span className="text-amber-300">Remaining Balance:</span>
-                <span className="font-mono text-amber-300">
-                  {formatINR(paymentBill.balance_due)}
-                </span>
-              </div>
-            </div>
+          {(() => {
+            const pbCurrBal = parseFloat(paymentBill.balance_due || 0);
+            const pbPrevBal = parseFloat(paymentBill.previous_balance || 0);
+            const pbTotalDue = parseFloat(paymentBill.total_due_with_carry_forward || (pbCurrBal + pbPrevBal));
+            const enteredInst = parseFloat(paymentForm.installment_amount || 0);
+            const extraOverThisBill = Math.max(0, enteredInst - pbCurrBal);
+            const netRemainingAfterPayment = Math.max(0, pbTotalDue - enteredInst);
 
-            <FormField label="Payment Amount (₹)" required>
-              <div className="relative">
-                <Input
-                  type="number"
-                  step="any"
-                  min="1"
-                  max={paymentBill.balance_due}
-                  value={paymentForm.installment_amount}
-                  onChange={(e) =>
-                    setPaymentForm({ ...paymentForm, installment_amount: e.target.value })
-                  }
-                  placeholder={`Max ₹${paymentBill.balance_due?.toFixed(2)}`}
-                  className="font-mono font-bold text-emerald-400 pr-24"
-                  required
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="absolute right-1 top-1/2 -translate-y-1/2"
-                  onClick={() =>
-                    setPaymentForm({
-                      ...paymentForm,
-                      installment_amount: paymentBill.balance_due?.toString() || "",
-                    })
-                  }
-                >
-                  Pay Full
-                </Button>
-              </div>
-            </FormField>
+            return (
+              <form onSubmit={handlePaymentSubmit} className="flex flex-col gap-5">
+                {/* 1. Account Balance Summary Cards */}
+                <div className="rounded-xl bg-zinc-950 border border-zinc-800/80 p-3.5 flex flex-col gap-3">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {/* This Bill Box */}
+                    <div className="p-3 rounded-lg bg-zinc-900/80 border border-zinc-800/90 flex flex-col justify-between">
+                      <div className="flex items-center justify-between text-xs text-zinc-400 mb-1">
+                        <span className="font-semibold uppercase tracking-wider text-[10px] text-zinc-400">This Invoice</span>
+                        <span className="font-mono text-[10px] text-zinc-500">#{paymentBill.bill_no?.slice(-6)}</span>
+                      </div>
+                      <div className="font-mono font-bold text-zinc-100 text-lg tabular-nums">
+                        {formatINR(pbCurrBal)}
+                      </div>
+                      <div className="text-[11px] text-zinc-500 mt-1 flex items-center justify-between">
+                        <span>Total: {formatINR(paymentBill.total_amount)}</span>
+                        {paymentBill.amount_paid > 0 && (
+                          <span className="text-emerald-400">Paid: {formatINR(paymentBill.amount_paid)}</span>
+                        )}
+                      </div>
+                    </div>
 
-            <FormField label="Payment Method">
-              <Select
-                value={paymentForm.payment_method}
-                onChange={(e) =>
-                  setPaymentForm({ ...paymentForm, payment_method: e.target.value })
-                }
-              >
-                <option value="Cash">Cash</option>
-                <option value="UPI">UPI</option>
-              </Select>
-            </FormField>
+                    {/* Previous Balance Box */}
+                    <div className="p-3 rounded-lg bg-zinc-900/80 border border-zinc-800/90 flex flex-col justify-between">
+                      <div className="flex items-center justify-between text-xs text-zinc-400 mb-1">
+                        <span className="font-semibold uppercase tracking-wider text-[10px] text-zinc-400">Previous Dues</span>
+                        <span className={`text-[10px] font-medium ${pbPrevBal > 0 ? "text-amber-400" : "text-zinc-500"}`}>
+                          {pbPrevBal > 0 ? "Pending" : "Cleared"}
+                        </span>
+                      </div>
+                      <div className={`font-mono font-bold text-lg tabular-nums ${pbPrevBal > 0 ? "text-amber-400" : "text-zinc-500"}`}>
+                        {formatINR(pbPrevBal)}
+                      </div>
+                      <div className="text-[11px] text-zinc-500 mt-1">
+                        {pbPrevBal > 0 ? "From older invoices" : "Zero older balance"}
+                      </div>
+                    </div>
+                  </div>
 
-            <FormField label="Note / Reference (Optional)">
-              <Input
-                placeholder="e.g. UPI Ref #, cash counter"
-                value={paymentForm.note}
-                onChange={(e) => setPaymentForm({ ...paymentForm, note: e.target.value })}
-              />
-            </FormField>
+                  {/* Total Customer Balance Bar */}
+                  <div className="p-3 rounded-lg bg-zinc-900/90 border border-zinc-800 flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-semibold text-zinc-300 block">Total Customer Outstanding</span>
+                      <span className="text-[11px] text-zinc-400">This invoice + all previous dues</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="font-mono font-bold text-xl text-zinc-100 block tabular-nums">
+                        {formatINR(pbTotalDue)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
 
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800 mt-2">
-              <Button
-                variant="secondary"
-                onClick={() => setPaymentBill(null)}
-                disabled={paymentMutation.isPending}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                variant="primary"
-                isLoading={paymentMutation.isPending}
-                loadingText="Recording payment…"
-              >
-                Save Payment
-              </Button>
-            </div>
-          </form>
+                {/* 2. Amount Input with Integrated Currency & Quick Presets */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-zinc-200 flex items-center gap-1.5">
+                      <span>Payment Amount</span>
+                      <span className="text-rose-400">*</span>
+                      <span className="text-xs text-zinc-400 font-mono font-normal">
+                        (Max Total Due: {formatINR(pbTotalDue)})
+                      </span>
+                    </label>
+                    {enteredInst > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentForm({ ...paymentForm, installment_amount: "" })}
+                        className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                      >
+                        Clear amount
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 flex items-center pointer-events-none text-zinc-400 font-mono font-semibold text-lg">
+                      ₹
+                    </div>
+                    <input
+                      type="number"
+                      step="any"
+                      min="1"
+                      max={pbTotalDue}
+                      value={paymentForm.installment_amount}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "") {
+                          setPaymentForm({ ...paymentForm, installment_amount: "" });
+                          return;
+                        }
+                        const num = parseFloat(val);
+                        if (!isNaN(num) && num > pbTotalDue) {
+                          toast.error(`Maximum allowed payment is ₹${pbTotalDue.toFixed(2)} (Current + Previous dues). Cannot enter more.`);
+                          setPaymentForm({ ...paymentForm, installment_amount: pbTotalDue.toString() });
+                        } else {
+                          setPaymentForm({ ...paymentForm, installment_amount: val });
+                        }
+                      }}
+                      placeholder={`Max ${formatINR(pbTotalDue)}`}
+                      className="w-full min-h-[50px] bg-zinc-950 border border-zinc-700 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl pl-9 pr-4 py-2 text-xl font-mono font-bold text-emerald-400 placeholder:text-zinc-600 tabular-nums transition-all outline-none"
+                      required
+                    />
+                  </div>
+
+                  {/* Quick Preset Pills */}
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {pbPrevBal > 0 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPaymentForm({
+                            ...paymentForm,
+                            installment_amount: pbTotalDue.toString(),
+                          })
+                        }
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5 cursor-pointer ${
+                          Math.abs(enteredInst - pbTotalDue) < 0.01 && pbTotalDue > 0
+                            ? "bg-purple-500/20 border-purple-500/60 text-purple-300 font-semibold shadow-sm"
+                            : "bg-zinc-900 border-zinc-800 text-purple-300 hover:border-purple-600 hover:text-white"
+                        }`}
+                      >
+                        <Receipt size={14} className="text-purple-400" />
+                        <span>Pay Total Due ({formatINR(pbTotalDue)})</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPaymentForm({
+                          ...paymentForm,
+                          installment_amount: pbCurrBal.toString(),
+                        })
+                      }
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5 cursor-pointer ${
+                        Math.abs(enteredInst - pbCurrBal) < 0.01 && pbCurrBal > 0
+                          ? "bg-emerald-500/20 border-emerald-500/60 text-emerald-300 font-semibold shadow-sm"
+                          : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:text-white"
+                      }`}
+                    >
+                      <Receipt size={14} className="text-emerald-400" />
+                      <span>Pay This Bill Only ({formatINR(pbCurrBal)})</span>
+                    </button>
+
+                    {pbCurrBal > 100 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPaymentForm({
+                            ...paymentForm,
+                            installment_amount: (Math.round((pbCurrBal / 2) * 100) / 100).toString(),
+                          })
+                        }
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium border bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:text-white transition-all cursor-pointer"
+                      >
+                        <span>50% This Bill ({formatINR(pbCurrBal / 2)})</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* 3. Dynamic Settlement Preview Banner */}
+                {enteredInst > 0 && (
+                  <div className="p-3.5 rounded-xl border transition-all text-xs flex flex-col gap-2 bg-zinc-950/80 border-zinc-800">
+                    {enteredInst >= pbCurrBal && pbCurrBal > 0 ? (
+                      <div className="flex items-center gap-2 text-emerald-300 font-medium">
+                        <CheckCircle size={16} weight="fill" className="text-emerald-400 shrink-0" />
+                        <span>This bill will be fully settled (₹0.00 balance).</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between text-zinc-300">
+                        <span>Remaining balance on this bill:</span>
+                        <span className="font-mono font-bold text-amber-300">{formatINR(Math.max(0, pbCurrBal - enteredInst))}</span>
+                      </div>
+                    )}
+
+                    {extraOverThisBill > 0 && (
+                      <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/40 border border-emerald-500/40 p-2.5 rounded-lg font-medium">
+                        <CheckCircle size={15} weight="fill" className="text-emerald-400 shrink-0" />
+                        <span>
+                          <strong>{formatINR(extraOverThisBill)} extra payment</strong> will automatically deduct from older pending invoices/opening balance!
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="border-t border-zinc-800/80 pt-2 flex items-center justify-between text-zinc-400 font-mono">
+                      <span>Total customer balance after this payment:</span>
+                      <span className={`font-bold text-sm ${netRemainingAfterPayment <= 0 ? "text-emerald-400" : "text-zinc-200"}`}>
+                        {formatINR(netRemainingAfterPayment)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. Payment Method Segmented Control */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-zinc-200">Payment Mode</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentForm({ ...paymentForm, payment_method: "Cash" })}
+                      className={`min-h-[44px] rounded-xl border font-medium text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        paymentForm.payment_method === "Cash"
+                          ? "bg-emerald-950/40 border-emerald-500/60 text-emerald-200 shadow-sm"
+                          : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                      }`}
+                    >
+                      <Money size={18} weight="bold" className={paymentForm.payment_method === "Cash" ? "text-emerald-400" : "text-zinc-500"} />
+                      <span>Cash</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPaymentForm({ ...paymentForm, payment_method: "UPI" })}
+                      className={`min-h-[44px] rounded-xl border font-medium text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        paymentForm.payment_method === "UPI"
+                          ? "bg-purple-950/40 border-purple-500/60 text-purple-200 shadow-sm"
+                          : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                      }`}
+                    >
+                      <QrCode size={18} weight="bold" className={paymentForm.payment_method === "UPI" ? "text-purple-400" : "text-zinc-500"} />
+                      <span>UPI / QR</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 5. Note / Reference */}
+                <FormField label="Note / Reference (Optional)">
+                  <Input
+                    placeholder="e.g. Counter cash, UPI UTR / reference no."
+                    value={paymentForm.note}
+                    onChange={(e) => setPaymentForm({ ...paymentForm, note: e.target.value })}
+                    className="bg-zinc-950 border-zinc-800 focus:border-zinc-700 text-sm"
+                  />
+                </FormField>
+
+                {/* 6. Footer Actions */}
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setPaymentBill(null)}
+                    disabled={paymentMutation.isPending}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="submit"
+                    isLoading={paymentMutation.isPending}
+                    loadingText="Recording payment…"
+                    className="shadow-lg shadow-emerald-950/40"
+                  >
+                    {enteredInst > 0 ? `Record ₹${enteredInst.toFixed(2)}` : "Record Payment"}
+                  </Button>
+                </div>
+              </form>
+            );
+          })()}
         </Modal>
       )}
 
@@ -1783,7 +2028,7 @@ export default function BillsPage() {
           <div className="flex flex-col gap-4">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
               <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
-                <span className="text-xs text-zinc-400 block">Total</span>
+                <span className="text-xs text-zinc-400 block">Bill Total</span>
                 <span className="font-mono font-bold text-zinc-100 text-base mt-1 block">
                   {formatINR(viewingBill.total_amount)}
                 </span>
@@ -1807,6 +2052,46 @@ export default function BillsPage() {
                 </span>
               </div>
             </div>
+
+            {/* Customer Previous Bills & Total Outstanding Banner */}
+            {viewingBill.previous_balance > 0.009 && (
+              <div className="p-3.5 rounded-xl bg-amber-950/20 border border-amber-500/30 flex flex-col gap-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-amber-300 font-semibold flex items-center gap-2">
+                    <WarningCircle size={18} weight="bold" />
+                    <span>Customer Previous Pending Balance (Purana Baaki):</span>
+                  </span>
+                  <span className="font-mono font-bold text-amber-300 text-base">
+                    {formatINR(viewingBill.previous_balance)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm pt-2 border-t border-amber-500/20">
+                  <span className="text-zinc-200 font-medium">Total Net Outstanding Due (Kul Baaki):</span>
+                  <span className="font-mono font-bold text-rose-400 text-lg">
+                    {formatINR(viewingBill.total_due_with_carry_forward)}
+                  </span>
+                </div>
+                {viewingBill.previous_bills && viewingBill.previous_bills.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-zinc-800/80">
+                    <span className="text-xs text-zinc-400 block mb-1.5 font-medium">
+                      Previous Unpaid Bills Breakdown ({viewingBill.previous_bills.length} bills):
+                    </span>
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                      {viewingBill.previous_bills.map((pb) => (
+                        <div key={pb.id || pb.bill_no} className="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg bg-zinc-900 border border-zinc-800">
+                          <div>
+                            <span className="font-mono text-zinc-200 font-semibold">#{pb.bill_no}</span>
+                            <span className="text-zinc-500 ml-2">({formatDateIN(pb.bill_date)})</span>
+                            <span className="text-zinc-400 ml-2">Total: {formatINR(pb.total_amount)}</span>
+                          </div>
+                          <span className="font-mono text-amber-300 font-bold">Due: {formatINR(pb.balance_due)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="border border-zinc-800 rounded-lg overflow-hidden">
               <table className="data-table">

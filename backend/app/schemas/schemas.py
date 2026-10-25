@@ -29,7 +29,7 @@ class UserOut(BaseModel):
 # Customer schemas
 class CustomerBase(BaseModel):
     name: str
-    phone: Optional[str] = None
+    phone: Optional[str] = "9730526659"
     address: Optional[str] = None
     notes: Optional[str] = None
     opening_balance: Optional[float] = 0.0
@@ -201,6 +201,8 @@ class BillOut(BaseModel):
     balance_due: float = 0.0
     previous_balance: float = 0.0
     total_due_with_carry_forward: float = 0.0
+    previous_unpaid_total: float = 0.0
+    all_previous_bills_total: float = 0.0
     payment_status: str = "unpaid"
     payment_method: str = "Cash"
     source: str
@@ -283,3 +285,12 @@ class BulkWhatsAppRequest(BaseModel):
     bill_ids: List[int]
     include_pdf_link: bool = True
     delay_seconds: int = 60
+
+class GeneralSettingsIn(BaseModel):
+    default_customer_phone: Optional[str] = "9730526659"
+    update_existing_customers: Optional[bool] = False
+
+class GeneralSettingsOut(BaseModel):
+    default_customer_phone: str = "9730526659"
+    updated_at: Optional[datetime] = None
+

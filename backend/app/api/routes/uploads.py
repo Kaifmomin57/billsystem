@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.core.audit import record_audit
 from app.core.signing import generate_signed_url
 from app.services.job_service import create_job, run_async_task, update_job_progress, complete_job, fail_job
-from app.models.models import Upload, UploadStatus, Bill, BillItem, PaymentInstallment, Customer, Product, CustomerAlias, ColumnMapping, CustomerRate, ProductRate, User
+from app.models.models import Upload, UploadStatus, Bill, BillItem, PaymentInstallment, Customer, Product, CustomerAlias, ColumnMapping, CustomerRate, ProductRate, User, AppSetting
 from app.schemas.schemas import UploadDraftUpdate, UploadOut
 from app.services.gemini_service import analyze_image
 from app.services.excel_service import build_ledger_page_excel
@@ -448,6 +448,8 @@ def confirm_upload_and_create_bills(
     # Preload existing customers to avoid N+1 DB queries per row
     existing_customers = db.query(Customer).all()
     customer_name_map = {c.name.strip().lower(): c for c in existing_customers if c.name}
+    phone_setting = db.query(AppSetting).filter(AppSetting.key == "default_customer_phone").first()
+    default_cust_phone = phone_setting.value if phone_setting and phone_setting.value else "9730526659"
 
     rows = draft.get("rows", [])
     for row in rows:
@@ -460,7 +462,7 @@ def confirm_upload_and_create_bills(
         c_key = c_name.lower()
         customer = customer_name_map.get(c_key)
         if not customer:
-            customer = Customer(name=c_name, is_active=True)
+            customer = Customer(name=c_name, phone=default_cust_phone, is_active=True)
             db.add(customer)
             db.flush()
             customer_name_map[c_key] = customer

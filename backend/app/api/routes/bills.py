@@ -27,6 +27,83 @@ settings = get_settings()
 
 from sqlalchemy.orm import joinedload, selectinload
 
+def apply_excess_payment(
+    db: Session,
+    customer_id: int,
+    excess_amount: float,
+    exclude_bill_id: Optional[int] = None,
+    payment_method: str = "Cash",
+    origin_bill_no: str = "",
+    note: str = ""
+) -> float:
+    """
+    Applies excess/overpayment to other unpaid/partial bills of the same customer in FIFO order (oldest first).
+    Any remaining excess after all bills are cleared reduces customer.opening_balance.
+    """
+    if excess_amount <= 0.001 or not customer_id:
+        return 0.0
+
+    query = (
+        db.query(Bill)
+        .filter(
+            Bill.customer_id == customer_id,
+            Bill.payment_status.in_(["unpaid", "partial"]),
+            Bill.balance_due > 0,
+        )
+    )
+    if exclude_bill_id:
+        query = query.filter(Bill.id != exclude_bill_id)
+
+    older_unpaid_bills = query.order_by(Bill.bill_date.asc(), Bill.id.asc()).all()
+
+    remaining = excess_amount
+    for ob in older_unpaid_bills:
+        if remaining <= 0.001:
+            break
+        ob_bal = float(ob.balance_due or 0)
+        if ob_bal <= 0.001:
+            continue
+
+        pay_amt = min(remaining, ob_bal)
+        ob_curr_paid = float(ob.amount_paid or 0)
+        ob_tot = float(ob.total_amount or 0)
+
+        new_paid = ob_curr_paid + pay_amt
+        new_bal = max(0.0, ob_tot - new_paid)
+
+        ob.amount_paid = new_paid
+        ob.balance_due = new_bal
+        ob.payment_status = "paid" if new_bal <= 0.001 else "partial"
+
+        # Update payment method
+        if ob.payment_method and ob.payment_method != payment_method and ob_curr_paid > 0:
+            ob.payment_method = "Mixed"
+        elif not ob.payment_method or ob_curr_paid == 0:
+            ob.payment_method = payment_method
+
+        inst_note = f"Extra payment from Bill #{origin_bill_no}" if origin_bill_no else "Auto-allocated extra payment"
+        if note:
+            inst_note += f" ({note})"
+
+        db.add(PaymentInstallment(
+            bill_id=ob.id,
+            amount=pay_amt,
+            payment_method=payment_method,
+            note=inst_note
+        ))
+
+        remaining -= pay_amt
+
+    # If there is still extra payment left, apply against customer opening_balance
+    if remaining > 0.001:
+        cust = db.query(Customer).filter(Customer.id == customer_id).first()
+        if cust:
+            current_op = float(cust.opening_balance or 0.0)
+            cust.opening_balance = round(current_op - remaining, 2)
+            remaining = 0.0
+
+    return remaining
+
 def _get_previous_unpaid_bills(bill, db):
     """Returns list of other unpaid/partial bills for the same customer, ordered by date, excluding current bill."""
     if not bill.customer_id:
@@ -56,7 +133,7 @@ def _get_bill_eager(bill_id: int, db: Session) -> Optional[Bill]:
         .first()
     )
 
-def _format_single_bill(bill, all_customer_unpaid=None):
+def _format_single_bill(bill, all_customer_unpaid=None, all_customer_bills_total=0.0):
     """In-memory formatter: 0 SQL queries executed."""
     items_out = []
     for item in (bill.items or []):
@@ -90,17 +167,20 @@ def _format_single_bill(bill, all_customer_unpaid=None):
         prev_bills_list = []
 
     cust_opening = float(getattr(cust, 'opening_balance', 0) or 0) if cust else 0.0
-    prev_balance = cust_opening + sum(float(pb.balance_due or 0) for pb in prev_bills_list)
+    prev_unpaid_sum = sum(float(pb.balance_due or 0) for pb in prev_bills_list)
+    prev_balance = cust_opening + prev_unpaid_sum
     total_due_cf = bal + prev_balance
+
     prev_bills_out = [
         {
+            "id": pb.id,
             "bill_no": pb.bill_no or f"INV-{pb.id}",
             "bill_date": pb.bill_date,
             "total_amount": float(pb.total_amount or 0),
             "amount_paid": float(pb.amount_paid or 0),
             "balance_due": float(pb.balance_due or 0),
         }
-        for pb in prev_bills_list[:5]
+        for pb in prev_bills_list
     ]
     return BillOut(
         id=bill.id, customer_id=bill.customer_id,
@@ -109,8 +189,10 @@ def _format_single_bill(bill, all_customer_unpaid=None):
         customer_address=cust.address if cust else None,
         bill_no=bill.bill_no, bill_date=bill.bill_date,
         total_amount=tot, amount_paid=paid, balance_due=bal,
-        previous_balance=prev_balance,
-        total_due_with_carry_forward=total_due_cf,
+        previous_balance=round(prev_balance, 2),
+        total_due_with_carry_forward=round(total_due_cf, 2),
+        previous_unpaid_total=round(prev_unpaid_sum, 2),
+        all_previous_bills_total=round(float(all_customer_bills_total or 0.0), 2),
         payment_status=p_status, payment_method=bill.payment_method or "Cash",
         source=bill.source, upload_id=bill.upload_id, image_path=bill.image_path,
         status=bill.status, created_at=bill.created_at,
@@ -120,15 +202,23 @@ def _format_single_bill(bill, all_customer_unpaid=None):
 
 def _format_bill_out(bill, db):
     prev_bills = _get_previous_unpaid_bills(bill, db) if db else []
-    return _format_single_bill(bill, prev_bills)
+    all_prev_total = 0.0
+    if db and bill.customer_id:
+        all_prev_total = float(
+            db.query(func.coalesce(func.sum(Bill.total_amount), 0))
+            .filter(Bill.customer_id == bill.customer_id, Bill.id != bill.id)
+            .scalar() or 0.0
+        )
+    return _format_single_bill(bill, prev_bills, all_prev_total)
 
 def _format_bills_batch(bills, db: Session):
-    """Batch formats a list of bills with 1 query for all customer previous unpaid balances."""
+    """Batch formats a list of bills with 1 query for all customer previous unpaid balances and 1 for totals."""
     if not bills:
         return []
 
     cust_ids = list({b.customer_id for b in bills if b.customer_id})
     unpaid_by_customer = {cid: [] for cid in cust_ids}
+    totals_by_customer = {cid: 0.0 for cid in cust_ids}
     if cust_ids:
         all_unpaid = (
             db.query(Bill)
@@ -144,7 +234,22 @@ def _format_bills_batch(bills, db: Session):
             if ub.customer_id in unpaid_by_customer:
                 unpaid_by_customer[ub.customer_id].append(ub)
 
-    return [_format_single_bill(b, unpaid_by_customer.get(b.customer_id, [])) for b in bills]
+        totals_query = (
+            db.query(Bill.customer_id, func.coalesce(func.sum(Bill.total_amount), 0))
+            .filter(Bill.customer_id.in_(cust_ids))
+            .group_by(Bill.customer_id)
+            .all()
+        )
+        totals_by_customer = {cid: float(amt) for cid, amt in totals_query}
+
+    return [
+        _format_single_bill(
+            b,
+            unpaid_by_customer.get(b.customer_id, []),
+            max(0.0, totals_by_customer.get(b.customer_id, 0.0) - float(b.total_amount or 0))
+        )
+        for b in bills
+    ]
 
 @router.get("", response_model=Union[PaginatedBillsOut, List[BillOut]])
 def list_bills(
@@ -268,14 +373,32 @@ def create_manual_bill(
             raise HTTPException(status_code=404, detail="Customer not found")
         bill_no = "BILL-" + data.bill_date.replace("-", "") + "-" + str(uuid.uuid4())[:6].upper()
         total = sum((item.quantity * item.rate) for item in data.items)
-        paid = max(0.0, float(data.amount_paid or 0))
-        if paid > total:
-            paid = total
-        bal = max(0.0, total - paid)
-        p_status = "paid" if paid >= total and total > 0 else "partial" if paid > 0 else "unpaid"
+        user_paid = max(0.0, float(data.amount_paid or 0))
+
+        # Check maximum allowed payment = current bill total + all previous dues
+        cust_opening = float(cust.opening_balance or 0.0)
+        prev_unpaid = (
+            db.query(func.coalesce(func.sum(Bill.balance_due), 0))
+            .filter(
+                Bill.customer_id == cust.id,
+                Bill.payment_status.in_(["unpaid", "partial"]),
+                Bill.balance_due > 0
+            ).scalar() or 0.0
+        )
+        total_max_allowed = round(total + cust_opening + float(prev_unpaid), 2)
+        if user_paid > total_max_allowed + 0.001:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment Rs{round(user_paid, 2)} exceeds total balance due Rs{total_max_allowed} (Current bill: Rs{round(total, 2)} + Previous dues: Rs{round(cust_opening + float(prev_unpaid), 2)}). Maximum allowed is Rs{total_max_allowed}."
+            )
+
+        paid_for_bill = min(user_paid, total)
+        extra_payment = max(0.0, user_paid - total)
+        bal = max(0.0, total - paid_for_bill)
+        p_status = "paid" if paid_for_bill >= total and total > 0 else "partial" if paid_for_bill > 0 else "unpaid"
         bill = Bill(
             customer_id=data.customer_id, bill_no=bill_no, bill_date=data.bill_date,
-            total_amount=total, amount_paid=paid, balance_due=bal, payment_status=p_status,
+            total_amount=total, amount_paid=paid_for_bill, balance_due=bal, payment_status=p_status,
             payment_method=data.payment_method or "Cash", source=data.source,
             upload_id=data.upload_id, image_path=data.image_path, status="active"
         )
@@ -289,12 +412,22 @@ def create_manual_bill(
                 is_live=bool(item.is_live),
                 confidence=item.confidence or 1.0, raw_text=item.raw_text
             ))
-        if paid > 0:
+        if paid_for_bill > 0:
             db.add(PaymentInstallment(
-                bill_id=bill.id, amount=paid,
+                bill_id=bill.id, amount=paid_for_bill,
                 payment_method=data.payment_method or "Cash",
                 note="Initial payment at bill creation"
             ))
+        if extra_payment > 0.001:
+            apply_excess_payment(
+                db=db,
+                customer_id=bill.customer_id,
+                excess_amount=extra_payment,
+                exclude_bill_id=bill.id,
+                payment_method=data.payment_method or "Cash",
+                origin_bill_no=bill.bill_no,
+                note="Bill creation overpayment"
+            )
         db.commit()
 
         # Audit logging (PRD Section 9)
@@ -536,27 +669,44 @@ def edit_bill(
         # Calculate new total
         new_total = sum((item.amount if item.amount is not None else (item.quantity * item.rate)) for item in data.items)
         
-        # Recalculate payment status
+        # Recalculate payment status and handle overpayment
         if data.amount_paid is not None:
-            current_paid = max(0.0, float(data.amount_paid))
+            user_paid = max(0.0, float(data.amount_paid))
         else:
-            current_paid = float(bill.amount_paid or 0)
+            user_paid = float(bill.amount_paid or 0)
 
-        if current_paid > new_total:
-            current_paid = new_total
+        cust = db.query(Customer).filter(Customer.id == bill.customer_id).first() if bill.customer_id else None
+        cust_opening = float(cust.opening_balance or 0.0) if cust else 0.0
+        prev_unpaid = (
+            db.query(func.coalesce(func.sum(Bill.balance_due), 0))
+            .filter(
+                Bill.customer_id == bill.customer_id,
+                Bill.id != bill.id,
+                Bill.payment_status.in_(["unpaid", "partial"]),
+                Bill.balance_due > 0
+            ).scalar() or 0.0
+        ) if bill.customer_id else 0.0
+        total_max_allowed = round(new_total + cust_opening + float(prev_unpaid), 2)
+        if user_paid > total_max_allowed + 0.001:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment Rs{round(user_paid, 2)} exceeds total balance due Rs{total_max_allowed} (Current bill: Rs{round(new_total, 2)} + Previous dues: Rs{round(cust_opening + float(prev_unpaid), 2)}). Maximum allowed is Rs{total_max_allowed}."
+            )
+
+        paid_for_bill = min(user_paid, new_total)
+        extra_payment = max(0.0, user_paid - new_total)
+        new_bal = max(0.0, new_total - paid_for_bill)
         
-        new_bal = max(0.0, new_total - current_paid)
-        
-        if current_paid >= new_total and new_total > 0:
+        if paid_for_bill >= new_total and new_total > 0:
             p_status = "paid"
-        elif current_paid > 0:
+        elif paid_for_bill > 0:
             p_status = "partial"
         else:
             p_status = "unpaid"
         
         # Update bill totals
         bill.total_amount = new_total
-        bill.amount_paid = current_paid
+        bill.amount_paid = paid_for_bill
         bill.balance_due = new_bal
         bill.payment_status = p_status
         
@@ -569,16 +719,55 @@ def edit_bill(
                 is_live=bool(item.is_live),
                 confidence=item.confidence or 1.0, raw_text=item.raw_text
             ))
+
+        if extra_payment > 0.001:
+            apply_excess_payment(
+                db=db,
+                customer_id=bill.customer_id,
+                excess_amount=extra_payment,
+                exclude_bill_id=bill.id,
+                payment_method=bill.payment_method or "Cash",
+                origin_bill_no=bill.bill_no,
+                note="Edit bill overpayment adjustment"
+            )
     elif data.amount_paid is not None:
-        current_paid = max(0.0, float(data.amount_paid))
+        user_paid = max(0.0, float(data.amount_paid))
         new_total = float(bill.total_amount or 0)
-        if current_paid > new_total:
-            current_paid = new_total
-        new_bal = max(0.0, new_total - current_paid)
-        p_status = "paid" if current_paid >= new_total and new_total > 0 else "partial" if current_paid > 0 else "unpaid"
-        bill.amount_paid = current_paid
+        cust = db.query(Customer).filter(Customer.id == bill.customer_id).first() if bill.customer_id else None
+        cust_opening = float(cust.opening_balance or 0.0) if cust else 0.0
+        prev_unpaid = (
+            db.query(func.coalesce(func.sum(Bill.balance_due), 0))
+            .filter(
+                Bill.customer_id == bill.customer_id,
+                Bill.id != bill.id,
+                Bill.payment_status.in_(["unpaid", "partial"]),
+                Bill.balance_due > 0
+            ).scalar() or 0.0
+        ) if bill.customer_id else 0.0
+        total_max_allowed = round(new_total + cust_opening + float(prev_unpaid), 2)
+        if user_paid > total_max_allowed + 0.001:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment Rs{round(user_paid, 2)} exceeds total balance due Rs{total_max_allowed} (Current bill: Rs{round(new_total, 2)} + Previous dues: Rs{round(cust_opening + float(prev_unpaid), 2)}). Maximum allowed is Rs{total_max_allowed}."
+            )
+        paid_for_bill = min(user_paid, new_total)
+        extra_payment = max(0.0, user_paid - new_total)
+        new_bal = max(0.0, new_total - paid_for_bill)
+        p_status = "paid" if paid_for_bill >= new_total and new_total > 0 else "partial" if paid_for_bill > 0 else "unpaid"
+        bill.amount_paid = paid_for_bill
         bill.balance_due = new_bal
         bill.payment_status = p_status
+
+        if extra_payment > 0.001:
+            apply_excess_payment(
+                db=db,
+                customer_id=bill.customer_id,
+                excess_amount=extra_payment,
+                exclude_bill_id=bill.id,
+                payment_method=bill.payment_method or "Cash",
+                origin_bill_no=bill.bill_no,
+                note="Edit bill overpayment adjustment"
+            )
 
     db.commit()
 
@@ -618,14 +807,27 @@ def update_bill_payment(
         installment = float(data.installment_amount or 0)
         if installment <= 0:
             raise HTTPException(status_code=400, detail="Payment amount must be greater than zero")
-        if installment > current_balance + 0.001:
+
+        # Total outstanding = current bill balance + previous unpaid balance (including opening balance)
+        prev_bills = _get_previous_unpaid_bills(bill, db) if db else []
+        cust_opening = float(getattr(bill.customer, 'opening_balance', 0) or 0) if bill.customer else 0.0
+        prev_unpaid_sum = sum(float(pb.balance_due or 0) for pb in prev_bills)
+        prev_balance = cust_opening + prev_unpaid_sum
+        total_max_allowed = round(current_balance + prev_balance, 2)
+
+        if installment > total_max_allowed + 0.001:
             raise HTTPException(
                 status_code=400,
-                detail=f"Payment Rs{round(installment, 2)} exceeds remaining balance Rs{round(current_balance, 2)}. Cannot overpay."
+                detail=f"Payment Rs{round(installment, 2)} exceeds total balance due Rs{total_max_allowed} (Current bill: Rs{round(current_balance, 2)} + Previous dues: Rs{round(prev_balance, 2)}). Maximum allowed is Rs{total_max_allowed}."
             )
-        new_paid = current_paid + installment
+
+        new_method = data.payment_method or "Cash"
+        pay_for_this_bill = min(installment, current_balance)
+        excess_payment = max(0.0, installment - pay_for_this_bill)
+
+        new_paid = current_paid + pay_for_this_bill
         new_bal = max(0.0, tot - new_paid)
-        if new_paid >= tot:
+        if new_paid >= tot and tot > 0:
             new_paid = tot
             new_bal = 0.0
             p_status = "paid"
@@ -633,17 +835,38 @@ def update_bill_payment(
             p_status = "partial"
         else:
             p_status = "unpaid"
+
         prev_method = bill.payment_method or "Cash"
-        new_method = data.payment_method or "Cash"
         if current_paid > 0 and prev_method != new_method and prev_method != "Mixed":
             combined_method = "Mixed"
         else:
             combined_method = new_method
+
         bill.amount_paid = new_paid
         bill.balance_due = new_bal
         bill.payment_status = p_status
         bill.payment_method = combined_method
-        db.add(PaymentInstallment(bill_id=bill.id, amount=installment, payment_method=new_method, note=data.note))
+
+        if pay_for_this_bill > 0:
+            db.add(PaymentInstallment(
+                bill_id=bill.id,
+                amount=pay_for_this_bill,
+                payment_method=new_method,
+                note=data.note or "Installment payment"
+            ))
+
+        # Auto-cascade extra payment to older unpaid bills & opening balance
+        if excess_payment > 0.001 and bill.customer_id:
+            apply_excess_payment(
+                db=db,
+                customer_id=bill.customer_id,
+                excess_amount=excess_payment,
+                exclude_bill_id=bill.id,
+                payment_method=new_method,
+                origin_bill_no=bill.bill_no,
+                note=f"Extra payment from Bill #{bill.bill_no}" + (f" ({data.note})" if data.note else "")
+            )
+
         db.commit()
 
         # Audit logging (PRD Section 9)

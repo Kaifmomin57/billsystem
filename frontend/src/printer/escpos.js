@@ -366,9 +366,17 @@ export function buildBillEscPos(billData, paperWidth = 42) {
   const paid = Number(data.amountPaid ?? data.amount_paid ?? 0);
   const balance = Number(data.balanceDue ?? data.balance_due ?? Math.max(0, total - paid));
 
+  const prevBal = Number(data.previous_balance || data.previousBalance || 0);
+  const totalNetDue = Number(data.total_due_with_carry_forward || data.totalDueWithCarryForward || (balance + prevBal));
+
   b.twoColumnRow("TOTAL AMOUNT:", `Rs.${total.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
   b.twoColumnRow(`Paid (${payMode}):`, `Rs.${paid.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
   b.twoColumnRow("Balance Due:", `Rs.${balance.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
+  if (prevBal > 0.009) {
+    b.divider();
+    b.twoColumnRow("PREV DUES (C/F):", `Rs.${prevBal.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
+    b.twoColumnRow("TOTAL NET DUE:", `Rs.${totalNetDue.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
+  }
   b.doubleDivider();
 
   // 6. Payment Installments Recorded (if any)
@@ -486,9 +494,17 @@ export function formatBillAsText(billData, paperWidth = 42) {
   const paid = Number(data.amountPaid ?? data.amount_paid ?? 0);
   const balance = Number(data.balanceDue ?? data.balance_due ?? Math.max(0, total - paid));
 
+  const prevBal = Number(data.previous_balance || data.previousBalance || 0);
+  const totalNetDue = Number(data.total_due_with_carry_forward || data.totalDueWithCarryForward || (balance + prevBal));
+
   lines.push(twoCol("TOTAL AMOUNT:", `Rs.${total.toFixed(2)}`));
   lines.push(twoCol(`Paid (${payMode}):`, `Rs.${paid.toFixed(2)}`));
   lines.push(twoCol("Balance Due:", `Rs.${balance.toFixed(2)}`));
+  if (prevBal > 0.009) {
+    lines.push(d1);
+    lines.push(twoCol("PREV DUE (C/F):", `Rs.${prevBal.toFixed(2)}`));
+    lines.push(twoCol("TOTAL NET DUE:", `Rs.${totalNetDue.toFixed(2)}`));
+  }
   lines.push(d2);
 
   // 6. Payment Installments Recorded (if any)

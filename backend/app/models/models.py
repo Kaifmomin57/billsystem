@@ -18,7 +18,7 @@ class Customer(Base):
     __tablename__ = "customers"
     id              = Column(Integer, primary_key=True, index=True)
     name            = Column(String(255), unique=True, nullable=False, index=True)
-    phone           = Column(String(50))
+    phone           = Column(String(50), default="9730526659")
     address         = Column(Text)
     notes           = Column(Text)
     opening_balance = Column(Numeric(12, 2), default=0.0)  # Previous pending balance without bill
@@ -213,3 +213,13 @@ class AuditLog(Base):
     request_id  = Column(String(50), nullable=True, index=True)
     ip_address  = Column(String(50), nullable=True)
     created_at  = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class AppSetting(Base):
+    """Dynamic key-value settings for application configuration (e.g. default customer phone)."""
+    __tablename__ = "app_settings"
+    key         = Column(String(100), primary_key=True, index=True)
+    value       = Column(Text, nullable=True)
+    description = Column(String(255), nullable=True)
+    updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+

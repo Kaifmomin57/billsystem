@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   GearSix,
@@ -10,6 +10,9 @@ import {
   Check,
   Sparkle,
   ArrowRight,
+  Phone,
+  FloppyDisk,
+  SlidersHorizontal,
 } from "@phosphor-icons/react";
 import toast from "react-hot-toast";
 import api from "../lib/api";
@@ -34,8 +37,13 @@ function InfoBanner({ icon: Icon, title, children }) {
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState("columns"); // columns | aliases | tags
+  const [activeTab, setActiveTab] = useState("general"); // general | columns | aliases | tags
   const [deleteTarget, setDeleteTarget] = useState(null); // { type: 'column'|'alias'|'tag', item: object }
+
+  // --- General Settings State ---
+  const [defaultPhone, setDefaultPhone] = useState("");
+  const [updateExistingPhone, setUpdateExistingPhone] = useState(false);
+  const [phoneLoaded, setPhoneLoaded] = useState(false);
 
   // --- Column Mappings State ---
   const [newColCode, setNewColCode] = useState("");
@@ -48,6 +56,36 @@ export default function SettingsPage() {
   // --- Tag Dictionary State ---
   const [newTagCode, setNewTagCode] = useState("");
   const [newTagMeaning, setNewTagMeaning] = useState("");
+
+  // Queries
+  const { data: generalSettings, isLoading: loadingGeneral } = useQuery({
+    queryKey: ["settings", "general"],
+    queryFn: async () => (await api.get("/settings/general")).data,
+  });
+
+  useEffect(() => {
+    if (generalSettings && !phoneLoaded) {
+      setDefaultPhone(generalSettings.default_customer_phone || "9730526659");
+      setPhoneLoaded(true);
+    }
+  }, [generalSettings, phoneLoaded]);
+
+  const saveGeneralMutation = useMutation({
+    mutationFn: async ({ default_customer_phone, update_existing_customers }) =>
+      (
+        await api.post("/settings/general", {
+          default_customer_phone,
+          update_existing_customers,
+        })
+      ).data,
+    onSuccess: () => {
+      toast.success("Default phone number updated successfully!");
+      queryClient.invalidateQueries(["settings", "general"]);
+      queryClient.invalidateQueries(["customers"]);
+      setUpdateExistingPhone(false);
+    },
+    onError: (err) => toast.error(err.response?.data?.detail || "Failed to update default phone"),
+  });
 
   // Queries
   const { data: columnMappings = [], isLoading: loadingCols } = useQuery({
@@ -161,6 +199,7 @@ export default function SettingsPage() {
   });
 
   const tabs = [
+    { id: "general", label: "General Settings", icon: SlidersHorizontal },
     { id: "columns", label: "Column Mappings", icon: Package, count: columnMappings.length },
     { id: "aliases", label: "Customer Aliases", icon: Users, count: aliases.length },
     { id: "tags", label: "Tag Dictionary", icon: Tag, count: tags.length },
@@ -171,7 +210,7 @@ export default function SettingsPage() {
       {/* PRD v2 Page Header */}
       <PageHeader
         title="Settings"
-        purpose="Configure ledger column mappings, customer name aliases, and handwritten tag codes"
+        purpose="Configure system defaults, customer ledger codes, name aliases, and tag dictionary"
       />
 
       {/* Tab Navigation */}
@@ -184,18 +223,114 @@ export default function SettingsPage() {
           >
             <t.icon size={16} weight="bold" />
             {t.label}
-            <span
-              className={`inline-flex items-center justify-center min-w-[20px] h-5 rounded-full text-xs font-bold px-1.5 ${
-                activeTab === t.id
-                  ? "bg-emerald-500/20 text-emerald-300"
-                  : "bg-zinc-800 text-zinc-400"
-              }`}
-            >
-              {t.count}
-            </span>
+            {t.count !== undefined && t.count !== null && (
+              <span
+                className={`inline-flex items-center justify-center min-w-[20px] h-5 rounded-full text-xs font-bold px-1.5 ${
+                  activeTab === t.id
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "bg-zinc-800 text-zinc-400"
+                }`}
+              >
+                {t.count}
+              </span>
+            )}
           </button>
         ))}
       </div>
+
+      {/* ─── TAB 0: GENERAL SETTINGS ─────────────────────────────────────────── */}
+      {activeTab === "general" && (
+        <div className="flex flex-col gap-6">
+          <InfoBanner icon={Sparkle} title="System Defaults & Customer Contact Automation">
+            Configure default settings across your billing system. The default customer phone number is automatically used when creating new customers or when auto-detecting customers during ledger bill scanning.
+          </InfoBanner>
+
+          <div className="card p-6 flex flex-col gap-5">
+            <div className="flex items-start justify-between gap-4 border-b border-zinc-800 pb-4">
+              <div>
+                <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+                  <Phone size={20} weight="bold" className="text-emerald-400" />
+                  Default Customer Phone Number
+                </h2>
+                <p className="text-sm text-zinc-400 mt-1">
+                  Used as the standard phone number for customer records and WhatsApp bill dispatch when none is explicitly entered.
+                </p>
+              </div>
+              <span className="badge-neutral font-mono text-xs">Customer Default</span>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                saveGeneralMutation.mutate({
+                  default_customer_phone: defaultPhone.trim(),
+                  update_existing_customers: updateExistingPhone,
+                });
+              }}
+              className="flex flex-col gap-5 max-w-xl"
+            >
+              <FormField
+                label="Default Phone Number"
+                hint="10-digit mobile number (e.g. 9730526659)"
+                error={
+                  defaultPhone && !/^\d{10}$/.test(defaultPhone.replace(/[\s\-\+]/g, "").slice(-10))
+                    ? "Please enter a valid 10-digit mobile number"
+                    : null
+                }
+              >
+                <div className="relative flex items-center">
+                  <div className="absolute left-3.5 flex items-center pointer-events-none text-zinc-400">
+                    <Phone size={18} weight="bold" className="text-emerald-400" />
+                  </div>
+                  <Input
+                    type="tel"
+                    placeholder="e.g. 9730526659"
+                    value={defaultPhone}
+                    onChange={(e) => setDefaultPhone(e.target.value)}
+                    className="pl-10 font-mono font-semibold text-zinc-100 text-base"
+                    required
+                  />
+                </div>
+              </FormField>
+
+              <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/80 flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="update-existing-chk"
+                  checked={updateExistingPhone}
+                  onChange={(e) => setUpdateExistingPhone(e.target.checked)}
+                  className="rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500/20 mt-1 cursor-pointer"
+                />
+                <label htmlFor="update-existing-chk" className="text-sm cursor-pointer select-none">
+                  <span className="font-semibold text-zinc-200 block">
+                    Update existing customers with missing phone numbers
+                  </span>
+                  <span className="text-xs text-zinc-400 mt-0.5 block leading-relaxed">
+                    Check this option to also apply this phone number to all existing customers whose contact number is currently empty.
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  icon={FloppyDisk}
+                  isLoading={saveGeneralMutation.isPending}
+                  loadingText="Saving phone number…"
+                >
+                  Save Default Phone
+                </Button>
+                {generalSettings?.updated_at && (
+                  <span className="text-xs text-zinc-500 font-mono">
+                    Last updated: {new Date(generalSettings.updated_at).toLocaleString("en-IN")}
+                  </span>
+                )}
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ─── TAB 1: COLUMN MAPPINGS ─────────────────────────────────────────── */}
       {activeTab === "columns" && (

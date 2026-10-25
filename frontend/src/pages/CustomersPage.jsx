@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -36,6 +36,15 @@ const CUST_PAGE_SIZE = 10;
 
 function CustomerModal({ isOpen, onClose, existing }) {
   const qc = useQueryClient();
+
+  const { data: generalSettings } = useQuery({
+    queryKey: ["settings", "general"],
+    queryFn: async () => (await api.get("/settings/general")).data,
+    staleTime: 60_000,
+  });
+
+  const configuredDefaultPhone = generalSettings?.default_customer_phone || "9730526659";
+
   const {
     register,
     handleSubmit,
@@ -49,7 +58,7 @@ function CustomerModal({ isOpen, onClose, existing }) {
         }
       : {
           name: "",
-          phone: "",
+          phone: configuredDefaultPhone,
           address: "",
           notes: "",
           opening_balance: 0,
@@ -57,12 +66,33 @@ function CustomerModal({ isOpen, onClose, existing }) {
         },
   });
 
+  // Sync form when modal opens or target customer changes
+  useEffect(() => {
+    if (isOpen) {
+      if (existing) {
+        reset({
+          ...existing,
+          opening_balance: existing.opening_balance ?? 0,
+        });
+      } else {
+        reset({
+          name: "",
+          phone: configuredDefaultPhone,
+          address: "",
+          notes: "",
+          opening_balance: 0,
+          is_active: true,
+        });
+      }
+    }
+  }, [isOpen, existing, configuredDefaultPhone, reset]);
+
   const mutation = useMutation({
     mutationFn: (data) => {
       const payload = {
         ...data,
         name: data.name.trim(),
-        phone: data.phone?.trim() || null,
+        phone: data.phone?.trim() || configuredDefaultPhone,
         address: data.address?.trim() || null,
         notes: data.notes?.trim() || null,
         opening_balance: parseFloat(data.opening_balance) || 0,

@@ -1,16 +1,62 @@
-from typing import List
+from typing import List, Optional
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.models import ColumnMapping, CustomerAlias, TagDictionary, Product, Customer, User
+from app.models.models import ColumnMapping, CustomerAlias, TagDictionary, Product, Customer, User, AppSetting
 from app.schemas.schemas import (
     ColumnMappingCreate, ColumnMappingOut,
     CustomerAliasCreate, CustomerAliasOut,
-    TagDictionaryCreate, TagDictionaryOut
+    TagDictionaryCreate, TagDictionaryOut,
+    GeneralSettingsIn, GeneralSettingsOut
 )
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+def get_app_setting(db: Session, key: str, default: str = "") -> str:
+    setting = db.query(AppSetting).filter(AppSetting.key == key).first()
+    return setting.value if setting and setting.value else default
+
+# General Settings (e.g. Default Customer Phone)
+@router.get("/general", response_model=GeneralSettingsOut)
+def get_general_settings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    setting = db.query(AppSetting).filter(AppSetting.key == "default_customer_phone").first()
+    phone = setting.value if setting and setting.value else "9730526659"
+    updated_at = setting.updated_at if setting else None
+    return GeneralSettingsOut(default_customer_phone=phone, updated_at=updated_at)
+
+@router.post("/general", response_model=GeneralSettingsOut)
+def update_general_settings(
+    data: GeneralSettingsIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    phone_val = (data.default_customer_phone or "").strip()
+    setting = db.query(AppSetting).filter(AppSetting.key == "default_customer_phone").first()
+    if not setting:
+        setting = AppSetting(
+            key="default_customer_phone",
+            value=phone_val or "9730526659",
+            description="Default customer phone number"
+        )
+        db.add(setting)
+    else:
+        setting.value = phone_val or "9730526659"
+        setting.updated_at = datetime.utcnow()
+
+    # If requested, also update all existing customers whose phone is null or empty
+    if data.update_existing_customers and setting.value:
+        db.query(Customer).filter((Customer.phone == None) | (Customer.phone == "")).update(
+            {"phone": setting.value}, synchronize_session=False
+        )
+
+    db.commit()
+    db.refresh(setting)
+    return GeneralSettingsOut(default_customer_phone=setting.value, updated_at=setting.updated_at)
 
 # Column mappings
 @router.get("/columns", response_model=List[ColumnMappingOut])
