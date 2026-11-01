@@ -68,6 +68,7 @@ export default function BillsPage() {
   const [viewingBill, setViewingBill] = useState(null);
   const [paymentBill, setPaymentBill] = useState(null);
   const [billToDelete, setBillToDelete] = useState(null);
+  const [isDeleteAllModalOpen, setIsDeleteAllModalOpen] = useState(false);
   const [editingBill, setEditingBill] = useState(null);
   const [sendingBillId, setSendingBillId] = useState(null);
 
@@ -254,6 +255,19 @@ export default function BillsPage() {
       setBillToDelete(null);
     },
     onError: (err) => toast.error(err.response?.data?.detail || "Failed to delete bill"),
+  });
+
+  const deleteAllMutation = useMutation({
+    mutationFn: () => api.delete("/bills/all"),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      toast.success(res?.data?.message || "All bills deleted successfully");
+      setIsDeleteAllModalOpen(false);
+    },
+    onError: (err) => toast.error(err.response?.data?.detail || "Failed to delete bills"),
   });
 
   const createMutation = useMutation({
@@ -670,6 +684,12 @@ export default function BillsPage() {
             label: "Send WhatsApp batch",
             icon: PaperPlaneTilt,
             onClick: () => setIsWhatsAppModalOpen(true),
+          },
+          {
+            label: "Delete all bills",
+            icon: Trash,
+            destructive: true,
+            onClick: () => setIsDeleteAllModalOpen(true),
           },
         ]}
       />
@@ -2302,6 +2322,18 @@ export default function BillsPage() {
         confirmText="Delete Bill"
         isLoading={deleteMutation.isPending}
         onConfirm={() => billToDelete && deleteMutation.mutate(billToDelete.id)}
+      />
+
+      {/* Delete All Bills Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={isDeleteAllModalOpen}
+        onClose={() => setIsDeleteAllModalOpen(false)}
+        title="Delete All Bills"
+        message="Are you sure you want to permanently delete ALL bills, including their line items and payment installments? Outstanding customer balances will be updated. This action cannot be undone."
+        confirmText="Delete All Bills"
+        isDestructive={true}
+        isLoading={deleteAllMutation.isPending}
+        onConfirm={() => deleteAllMutation.mutate()}
       />
     </div>
   );

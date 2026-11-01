@@ -896,6 +896,91 @@ def update_bill_payment(
         user_id=current_user.id
     )
 
+
+@router.delete("/all")
+@router.delete("")
+def delete_all_bills(
+    request: Request,
+    customer_id: Optional[int] = Query(None, description="Optional customer ID to only delete bills for that customer"),
+    upload_id: Optional[int] = Query(None, description="Optional upload ID to only delete bills for that upload"),
+    payment_status: Optional[str] = Query(None, description="Optional payment status filter ('paid', 'unpaid', 'partial')"),
+    bill_ids: Optional[str] = Query(None, description="Optional comma-separated list of bill IDs, e.g. 1,2,3"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Deletes all bills or filtered bills, cascading to related bill items and payment installments.
+    Supports deleting all bills globally, or filtering by customer_id, upload_id, payment_status, or explicit bill_ids.
+    """
+    parsed_ids = []
+    if bill_ids:
+        try:
+            parsed_ids = [int(bid.strip()) for bid in bill_ids.split(",") if bid.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid bill_ids format. Expected comma-separated integers.")
+
+    has_filters = customer_id is not None or upload_id is not None or bool(payment_status) or bool(parsed_ids)
+
+    if not has_filters:
+        total_count = db.query(Bill).count()
+        if total_count == 0:
+            return {"message": "No bills found to delete", "deleted_count": 0}
+
+        db.query(PaymentInstallment).delete(synchronize_session=False)
+        db.query(BillItem).delete(synchronize_session=False)
+        deleted_count = db.query(Bill).delete(synchronize_session=False)
+        db.commit()
+    else:
+        query = db.query(Bill)
+        if customer_id is not None:
+            query = query.filter(Bill.customer_id == customer_id)
+        if upload_id is not None:
+            query = query.filter(Bill.upload_id == upload_id)
+        if payment_status:
+            query = query.filter(Bill.payment_status == payment_status)
+        if parsed_ids:
+            query = query.filter(Bill.id.in_(parsed_ids))
+
+        target_ids = [row[0] for row in query.with_entities(Bill.id).all()]
+        deleted_count = len(target_ids)
+        if deleted_count == 0:
+            return {"message": "No bills found matching the deletion criteria", "deleted_count": 0}
+
+        # Delete in chunks of 500 to stay safely below parameter limits across all database backends
+        chunk_size = 500
+        for i in range(0, len(target_ids), chunk_size):
+            chunk = target_ids[i:i + chunk_size]
+            db.query(PaymentInstallment).filter(PaymentInstallment.bill_id.in_(chunk)).delete(synchronize_session=False)
+            db.query(BillItem).filter(BillItem.bill_id.in_(chunk)).delete(synchronize_session=False)
+            db.query(Bill).filter(Bill.id.in_(chunk)).delete(synchronize_session=False)
+        db.commit()
+
+    # Record audit entry
+    req_id = getattr(request.state, "request_id", None)
+    client_ip = request.client.host if request.client else None
+    record_audit(
+        db=db,
+        action="delete_all_bills",
+        entity_type="bill",
+        entity_id="all" if not customer_id else f"customer_{customer_id}",
+        user_id=current_user.id,
+        changes={
+            "deleted_count": deleted_count,
+            "customer_id": customer_id,
+            "upload_id": upload_id,
+            "payment_status": payment_status,
+            "bill_ids": parsed_ids if parsed_ids else None
+        },
+        request_id=req_id,
+        ip_address=client_ip
+    )
+
+    return {
+        "message": f"Successfully deleted {deleted_count} bill{'s' if deleted_count != 1 else ''}",
+        "deleted_count": deleted_count
+    }
+
+
 @router.delete("/{bill_id}")
 def delete_bill(
     bill_id: int,
