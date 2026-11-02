@@ -454,7 +454,7 @@ def build_daily_by_product(report_data: Union[Dict[str, Any], List[Dict]], repor
         sale = float(p.get("total_amount") or p.get("total_sale") or 0)
         received = float(p.get("amount_paid") or 0)
         pending = float(p.get("balance_due") or 0)
-        qty = float(p.get("total_qty") or p.get("quantity") or 0)
+        qty = float(p.get("total_quantity") or p.get("total_qty") or p.get("quantity") or 0)
         pp = p.get("purchase_price")
         avg_rate = float(p.get("avg_rate") or (sale / qty if qty > 0 else 0))
         pl = p.get("profit_loss")
