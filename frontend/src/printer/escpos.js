@@ -376,6 +376,10 @@ export function buildBillEscPos(billData, paperWidth = 42) {
     b.divider();
     b.twoColumnRow("PREV DUES (C/F):", `Rs.${prevBal.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
     b.twoColumnRow("TOTAL NET DUE:", `Rs.${totalNetDue.toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
+  } else if (prevBal < -0.009) {
+    b.divider();
+    b.twoColumnRow("ADVANCE CREDIT:", `Rs.${Math.abs(prevBal).toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
+    b.twoColumnRow("TOTAL NET DUE:", `Rs.${Math.max(0, totalNetDue).toFixed(2)}`, true, TEXT_SIZE.DOUBLE_HEIGHT);
   }
   b.doubleDivider();
 
@@ -504,6 +508,10 @@ export function formatBillAsText(billData, paperWidth = 42) {
     lines.push(d1);
     lines.push(twoCol("PREV DUE (C/F):", `Rs.${prevBal.toFixed(2)}`));
     lines.push(twoCol("TOTAL NET DUE:", `Rs.${totalNetDue.toFixed(2)}`));
+  } else if (prevBal < -0.009) {
+    lines.push(d1);
+    lines.push(twoCol("ADVANCE CREDIT:", `Rs.${Math.abs(prevBal).toFixed(2)}`));
+    lines.push(twoCol("TOTAL NET DUE:", `Rs.${Math.max(0, totalNetDue).toFixed(2)}`));
   }
   lines.push(d2);
 

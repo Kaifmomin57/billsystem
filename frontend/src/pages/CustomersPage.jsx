@@ -31,6 +31,7 @@ import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { TableSkeleton } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
 import Pagination from "../components/Pagination";
+import { CustomerPaymentModal } from "../components/CustomerPaymentModal";
 
 const CUST_PAGE_SIZE = 10;
 
@@ -209,6 +210,7 @@ export default function CustomersPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [modalCustomer, setModalCustomer] = useState(null); // null | "add" | customer obj
+  const [paymentCustomer, setPaymentCustomer] = useState(null); // null | "select" | customer obj
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [page, setPage] = useState(1);
   const qc = useQueryClient();
@@ -261,13 +263,22 @@ export default function CustomersPage() {
         title="Customers"
         purpose="Find customers, inspect balances, and track outstanding dues"
         primaryAction={
-          <Button
-            variant="primary"
-            icon={Plus}
-            onClick={() => setModalCustomer("add")}
-          >
-            Add Customer
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              icon={Wallet}
+              onClick={() => setPaymentCustomer("select")}
+            >
+              Receive Payment / Advance
+            </Button>
+            <Button
+              variant="primary"
+              icon={Plus}
+              onClick={() => setModalCustomer("add")}
+            >
+              Add Customer
+            </Button>
+          </div>
         }
         moreActions={[
           {
@@ -352,7 +363,16 @@ export default function CustomersPage() {
                         <td className="cell-secondary font-mono">{c.phone || "—"}</td>
                         <td className="cell-secondary">{c.address || "—"}</td>
                         <td className="cell-money text-base">
-                          {totalBal > 0 ? (
+                          {totalBal < -0.01 ? (
+                            <div className="flex flex-col items-end">
+                              <span className="font-bold text-emerald-400">
+                                {formatINR(Math.abs(totalBal))}
+                              </span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-medium">
+                                Advance (जमा)
+                              </span>
+                            </div>
+                          ) : totalBal > 0.01 ? (
                             <div className="flex flex-col items-end">
                               <span className="font-bold text-amber-300">
                                 {formatINR(totalBal)}
@@ -377,7 +397,17 @@ export default function CustomersPage() {
                         </td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2">
-                            {/* Primary row action: View Bills */}
+                            {/* Pay / Advance button */}
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              icon={Wallet}
+                              onClick={() => setPaymentCustomer(c)}
+                            >
+                              Pay / Advance
+                            </Button>
+
+                            {/* View Bills */}
                             <Button
                               variant="secondary"
                               size="sm"
@@ -391,6 +421,11 @@ export default function CustomersPage() {
                             <MoreActions
                               label={`Actions for ${c.name}`}
                               items={[
+                                {
+                                  label: "Receive Payment / Advance",
+                                  icon: Wallet,
+                                  onClick: () => setPaymentCustomer(c),
+                                },
                                 {
                                   label: "Edit details",
                                   icon: PencilSimple,
@@ -445,17 +480,25 @@ export default function CustomersPage() {
                     </div>
 
                     <div className="flex items-center justify-between p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-sm">
-                      <span className="text-zinc-400">Total Outstanding</span>
+                      <span className="text-zinc-400">{totalBal < -0.01 ? "Advance Balance" : "Total Outstanding"}</span>
                       <span
                         className={`font-mono font-bold text-base tabular-nums ${
-                          totalBal > 0 ? "text-amber-300" : "text-emerald-400"
+                          totalBal < -0.01 ? "text-emerald-400" : totalBal > 0 ? "text-amber-300" : "text-emerald-400"
                         }`}
                       >
-                        {formatINR(totalBal)}
+                        {totalBal < -0.01 ? `${formatINR(Math.abs(totalBal))} (Advance)` : formatINR(totalBal)}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between pt-1 gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={Wallet}
+                        onClick={() => setPaymentCustomer(c)}
+                      >
+                        Pay / Advance
+                      </Button>
                       <Button
                         variant="secondary"
                         size="sm"
@@ -519,6 +562,15 @@ export default function CustomersPage() {
         isLoading={deleteMutation.isPending}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
       />
+
+      {/* Customer Payment & Advance Modal */}
+      {paymentCustomer && (
+        <CustomerPaymentModal
+          isOpen={Boolean(paymentCustomer)}
+          onClose={() => setPaymentCustomer(null)}
+          initialCustomer={paymentCustomer}
+        />
+      )}
     </div>
   );
 }

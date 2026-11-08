@@ -1,14 +1,16 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, Query, HTTPException
+from datetime import datetime
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.audit import record_audit
 from app.models.models import (
     Customer, CustomerRate, CustomerAlias, RateHistory,
-    Bill, BillItem, PaymentInstallment, AppSetting
+    Bill, BillItem, PaymentInstallment, AppSetting, User
 )
 
 router = APIRouter(prefix="/customers", tags=["customers"])
@@ -23,9 +25,17 @@ class CustomerIn(BaseModel):
     is_active: bool = True
 
 
+class CustomerPaymentIn(BaseModel):
+    amount: float
+    payment_method: Optional[str] = "Cash"
+    note: Optional[str] = None
+    date: Optional[str] = None
+
+
 def _format_customer(c: Customer, bill_dues: dict) -> dict:
     op = float(c.opening_balance or 0.0)
     bd = float(bill_dues.get(c.id, 0.0))
+    tot = round(op + bd, 2)
     return {
         "id": c.id,
         "name": c.name,
@@ -34,7 +44,8 @@ def _format_customer(c: Customer, bill_dues: dict) -> dict:
         "notes": c.notes,
         "opening_balance": op,
         "bills_balance": bd,
-        "total_balance": round(op + bd, 2),
+        "total_balance": tot,
+        "advance_balance": round(abs(min(0.0, tot)), 2),
         "is_active": c.is_active,
     }
 
@@ -173,3 +184,156 @@ def delete_customer(customer_id: int, db: Session = Depends(get_db), _=Depends(g
     db.delete(c)
     db.commit()
     return {"message": "Customer deleted successfully"}
+
+
+@router.post("/{customer_id}/payment")
+def record_customer_payment(
+    customer_id: int,
+    body: CustomerPaymentIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Records a payment for a customer:
+    1. First clears any unpaid/partial bills in FIFO order (oldest first).
+    2. Any remaining excess pays off customer.opening_balance (unbilled previous dues).
+    3. If all bills and previous dues are paid (or already zero), any remaining excess
+       is credited to customer's Advance Balance (customer.opening_balance becomes negative).
+    """
+    amount = float(body.amount or 0.0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Payment amount must be greater than zero")
+
+    c = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    pay_method = body.payment_method or "Cash"
+    user_note = (body.note or "").strip()
+    remaining = round(amount, 2)
+
+    # 1. Settle unpaid bills FIFO
+    unpaid_bills = (
+        db.query(Bill)
+        .filter(
+            Bill.customer_id == customer_id,
+            Bill.payment_status.in_(["unpaid", "partial"]),
+            Bill.balance_due > 0,
+        )
+        .order_by(Bill.bill_date.asc(), Bill.id.asc())
+        .all()
+    )
+
+    bills_settled = []
+    total_applied_to_bills = 0.0
+
+    for b in unpaid_bills:
+        if remaining <= 0.001:
+            break
+        b_bal = float(b.balance_due or 0)
+        if b_bal <= 0.001:
+            continue
+
+        pay_for_this_bill = min(remaining, b_bal)
+        b_curr_paid = float(b.amount_paid or 0)
+        b_tot = float(b.total_amount or 0)
+
+        new_paid = b_curr_paid + pay_for_this_bill
+        new_bal = max(0.0, b_tot - new_paid)
+
+        b.amount_paid = new_paid
+        b.balance_due = new_bal
+        b.payment_status = "paid" if new_bal <= 0.001 else "partial"
+
+        if b.payment_method and b.payment_method != pay_method and b_curr_paid > 0:
+            b.payment_method = "Mixed"
+        elif not b.payment_method or b_curr_paid == 0:
+            b.payment_method = pay_method
+
+        inst_note = f"Customer payment ({user_note})" if user_note else "Customer payment"
+        inst = PaymentInstallment(
+            bill_id=b.id,
+            amount=pay_for_this_bill,
+            payment_method=pay_method,
+            note=inst_note,
+            paid_at=datetime.utcnow()
+        )
+        db.add(inst)
+
+        remaining = round(remaining - pay_for_this_bill, 2)
+        total_applied_to_bills = round(total_applied_to_bills + pay_for_this_bill, 2)
+        bills_settled.append({
+            "bill_id": b.id,
+            "bill_no": b.bill_no,
+            "paid_amount": pay_for_this_bill,
+            "remaining_bill_balance": new_bal,
+            "status": b.payment_status
+        })
+
+    # 2. Settle positive opening balance (previous dues without bill)
+    applied_to_opening_balance = 0.0
+    curr_opening = float(c.opening_balance or 0.0)
+
+    if remaining > 0.001 and curr_opening > 0.001:
+        pay_op = min(remaining, curr_opening)
+        c.opening_balance = round(curr_opening - pay_op, 2)
+        applied_to_opening_balance = pay_op
+        remaining = round(remaining - pay_op, 2)
+
+    # 3. If all bills and previous dues are cleared, excess becomes Customer Advance (credit)
+    advance_credited = 0.0
+    if remaining > 0.001:
+        c.opening_balance = round(float(c.opening_balance or 0.0) - remaining, 2)
+        advance_credited = remaining
+        remaining = 0.0
+
+    db.commit()
+    db.refresh(c)
+
+    # Compute final customer balances
+    bd = float(
+        db.query(func.coalesce(func.sum(Bill.balance_due), 0))
+        .filter(Bill.customer_id == customer_id, Bill.balance_due > 0)
+        .scalar() or 0.0
+    )
+    final_op = float(c.opening_balance or 0.0)
+    final_total_bal = round(final_op + bd, 2)
+
+    # Audit logging
+    req_id = getattr(request.state, "request_id", None) if hasattr(request, "state") else None
+    client_ip = request.client.host if request and request.client else None
+    record_audit(
+        db=db,
+        action="customer_payment",
+        entity_type="customer",
+        entity_id=str(c.id),
+        user_id=current_user.id,
+        changes={
+            "amount": amount,
+            "payment_method": pay_method,
+            "applied_to_bills": total_applied_to_bills,
+            "applied_to_opening": applied_to_opening_balance,
+            "advance_credited": advance_credited,
+            "final_total_balance": final_total_bal,
+            "note": user_note,
+        },
+        request_id=req_id,
+        ip_address=client_ip
+    )
+
+    return {
+        "success": True,
+        "message": f"Payment of ₹{amount:.2f} processed successfully",
+        "customer": _format_customer(c, {c.id: bd}),
+        "settlement": {
+            "amount_paid": amount,
+            "applied_to_bills": total_applied_to_bills,
+            "applied_to_opening_balance": applied_to_opening_balance,
+            "advance_credited": advance_credited,
+            "bills_settled": bills_settled,
+            "new_opening_balance": final_op,
+            "new_bills_balance": bd,
+            "new_total_balance": final_total_bal,
+        }
+    }

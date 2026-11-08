@@ -385,13 +385,6 @@ def create_manual_bill(
                 Bill.balance_due > 0
             ).scalar() or 0.0
         )
-        total_max_allowed = round(total + cust_opening + float(prev_unpaid), 2)
-        if user_paid > total_max_allowed + 0.001:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Payment Rs{round(user_paid, 2)} exceeds total balance due Rs{total_max_allowed} (Current bill: Rs{round(total, 2)} + Previous dues: Rs{round(cust_opening + float(prev_unpaid), 2)}). Maximum allowed is Rs{total_max_allowed}."
-            )
-
         paid_for_bill = min(user_paid, total)
         extra_payment = max(0.0, user_paid - total)
         bal = max(0.0, total - paid_for_bill)
@@ -686,13 +679,6 @@ def edit_bill(
                 Bill.balance_due > 0
             ).scalar() or 0.0
         ) if bill.customer_id else 0.0
-        total_max_allowed = round(new_total + cust_opening + float(prev_unpaid), 2)
-        if user_paid > total_max_allowed + 0.001:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Payment Rs{round(user_paid, 2)} exceeds total balance due Rs{total_max_allowed} (Current bill: Rs{round(new_total, 2)} + Previous dues: Rs{round(cust_opening + float(prev_unpaid), 2)}). Maximum allowed is Rs{total_max_allowed}."
-            )
-
         paid_for_bill = min(user_paid, new_total)
         extra_payment = max(0.0, user_paid - new_total)
         new_bal = max(0.0, new_total - paid_for_bill)
@@ -744,12 +730,6 @@ def edit_bill(
                 Bill.balance_due > 0
             ).scalar() or 0.0
         ) if bill.customer_id else 0.0
-        total_max_allowed = round(new_total + cust_opening + float(prev_unpaid), 2)
-        if user_paid > total_max_allowed + 0.001:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Payment Rs{round(user_paid, 2)} exceeds total balance due Rs{total_max_allowed} (Current bill: Rs{round(new_total, 2)} + Previous dues: Rs{round(cust_opening + float(prev_unpaid), 2)}). Maximum allowed is Rs{total_max_allowed}."
-            )
         paid_for_bill = min(user_paid, new_total)
         extra_payment = max(0.0, user_paid - new_total)
         new_bal = max(0.0, new_total - paid_for_bill)
@@ -814,12 +794,6 @@ def update_bill_payment(
         prev_unpaid_sum = sum(float(pb.balance_due or 0) for pb in prev_bills)
         prev_balance = cust_opening + prev_unpaid_sum
         total_max_allowed = round(current_balance + prev_balance, 2)
-
-        if installment > total_max_allowed + 0.001:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Payment Rs{round(installment, 2)} exceeds total balance due Rs{total_max_allowed} (Current bill: Rs{round(current_balance, 2)} + Previous dues: Rs{round(prev_balance, 2)}). Maximum allowed is Rs{total_max_allowed}."
-            )
 
         new_method = data.payment_method or "Cash"
         pay_for_this_bill = min(installment, current_balance)

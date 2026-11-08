@@ -40,6 +40,7 @@ import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { TableSkeleton } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
 import Pagination from "../components/Pagination";
+import { CustomerPaymentModal } from "../components/CustomerPaymentModal";
 
 const PAGE_SIZE = 20;
 
@@ -71,6 +72,7 @@ export default function BillsPage() {
   const [isDeleteAllModalOpen, setIsDeleteAllModalOpen] = useState(false);
   const [editingBill, setEditingBill] = useState(null);
   const [sendingBillId, setSendingBillId] = useState(null);
+  const [customerPaymentModal, setCustomerPaymentModal] = useState(null);
 
   // Payment Form state
   const [paymentForm, setPaymentForm] = useState({
@@ -433,12 +435,6 @@ export default function BillsPage() {
 
     const selCust = customers.find((c) => String(c.id) === String(billMeta.customer_id));
     const prevDue = parseFloat(selCust?.total_balance || 0);
-    const maxAllowed = billTotal + prevDue;
-    const paidAmt = parseFloat(billMeta.amount_paid || 0);
-    if (paidAmt > maxAllowed + 0.001) {
-      toast.error(`Amount paid cannot exceed total balance ₹${maxAllowed.toFixed(2)} (Current: ₹${billTotal.toFixed(2)} + Previous: ₹${prevDue.toFixed(2)})`);
-      return;
-    }
 
     createMutation.mutate({
       customer_id: parseInt(billMeta.customer_id),
@@ -597,12 +593,6 @@ export default function BillsPage() {
 
     const selCust = customers.find((c) => String(c.id) === String(editBillMeta.customer_id));
     const prevDue = parseFloat(editingBill?.previous_balance || selCust?.total_balance || 0);
-    const maxAllowed = editBillTotal + prevDue;
-    const paidAmt = parseFloat(editBillMeta.amount_paid || 0);
-    if (paidAmt > maxAllowed + 0.001) {
-      toast.error(`Amount paid cannot exceed total balance ₹${maxAllowed.toFixed(2)} (Current: ₹${editBillTotal.toFixed(2)} + Previous: ₹${prevDue.toFixed(2)})`);
-      return;
-    }
 
     updateBillMutation.mutate({
       billId: editingBill.id,
@@ -640,13 +630,6 @@ export default function BillsPage() {
       toast.error("Please enter a valid amount greater than zero");
       return;
     }
-    const pbCurrBal = parseFloat(paymentBill.balance_due || 0);
-    const pbPrevBal = parseFloat(paymentBill.previous_balance || 0);
-    const maxAmt = parseFloat(paymentBill.total_due_with_carry_forward || (pbCurrBal + pbPrevBal));
-    if (amt > maxAmt + 0.001) {
-      toast.error(`Maximum allowed payment is ₹${maxAmt.toFixed(2)} (Current: ₹${pbCurrBal.toFixed(2)} + Previous: ₹${pbPrevBal.toFixed(2)}). Cannot exceed total due.`);
-      return;
-    }
     paymentMutation.mutate({
       billId: paymentBill.id,
       payload: {
@@ -666,13 +649,22 @@ export default function BillsPage() {
         title="Bills & Invoices"
         purpose="Create, send, and collect customer bills with itemized accounting"
         primaryAction={
-          <Button
-            variant="primary"
-            icon={Plus}
-            onClick={() => setIsManualModalOpen(true)}
-          >
-            Create Bill
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              icon={Wallet}
+              onClick={() => setCustomerPaymentModal("select")}
+            >
+              Receive Payment / Advance
+            </Button>
+            <Button
+              variant="primary"
+              icon={Plus}
+              onClick={() => setIsManualModalOpen(true)}
+            >
+              Create Bill
+            </Button>
+          </div>
         }
         moreActions={[
           {
@@ -981,6 +973,11 @@ export default function BillsPage() {
                               label={`More options for #${b.bill_no}`}
                               items={[
                                 {
+                                  label: "Receive Customer Payment / Advance",
+                                  icon: Wallet,
+                                  onClick: () => setCustomerPaymentModal({ id: b.customer_id, name: b.customer_name }),
+                                },
+                                {
                                   label: "View details",
                                   icon: Eye,
                                   onClick: () => setViewingBill(b),
@@ -1118,6 +1115,11 @@ export default function BillsPage() {
                         label="More actions"
                         items={[
                           {
+                            label: "Receive Customer Payment / Advance",
+                            icon: Wallet,
+                            onClick: () => setCustomerPaymentModal({ id: b.customer_id, name: b.customer_name }),
+                          },
+                          {
                             label: "Edit bill",
                             icon: PencilSimple,
                             onClick: () => handleOpenEditBill(b),
@@ -1182,11 +1184,15 @@ export default function BillsPage() {
                   required
                 >
                   <option value="">Choose customer…</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} {c.total_balance > 0 ? `(Due: ₹${c.total_balance})` : ""}
-                    </option>
-                  ))}
+                  {customers.map((c) => {
+                    const bal = parseFloat(c.total_balance || 0);
+                    const tag = bal < -0.01 ? `(Advance: ₹${Math.abs(bal).toFixed(2)})` : bal > 0.01 ? `(Due: ₹${bal.toFixed(2)})` : "";
+                    return (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {tag}
+                      </option>
+                    );
+                  })}
                 </Select>
               </FormField>
 
@@ -1205,7 +1211,17 @@ export default function BillsPage() {
               const selCust = customers.find((c) => String(c.id) === String(billMeta.customer_id));
               if (!selCust) return null;
               const totBal = parseFloat(selCust.total_balance || 0);
-              return totBal > 0 ? (
+              return totBal < -0.01 ? (
+                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-sm">
+                  <span className="text-emerald-300 font-medium flex items-center gap-2">
+                    <CheckCircle size={18} weight="bold" />
+                    <span>Customer has Advance Balance (जमा राशि):</span>
+                  </span>
+                  <span className="font-mono font-bold text-emerald-400 text-base tabular-nums">
+                    {formatINR(Math.abs(totBal))} (Advance)
+                  </span>
+                </div>
+              ) : totBal > 0.01 ? (
                 <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-sm">
                   <span className="text-amber-300 font-medium flex items-center gap-2">
                     <WarningCircle size={18} weight="bold" />
@@ -1417,9 +1433,9 @@ export default function BillsPage() {
                     </span>
                   </div>
                   <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
-                    <span className="text-xs text-zinc-400 block">Previous Pending</span>
-                    <span className="font-mono font-bold text-amber-400 text-lg mt-1 block tabular-nums">
-                      {formatINR(prevDue)}
+                    <span className="text-xs text-zinc-400 block">{prevDue < -0.01 ? "Customer Advance" : "Previous Pending"}</span>
+                    <span className={`font-mono font-bold text-lg mt-1 block tabular-nums ${prevDue < -0.01 ? "text-emerald-400" : "text-amber-400"}`}>
+                      {prevDue < -0.01 ? `${formatINR(Math.abs(prevDue))} (Adv)` : formatINR(prevDue)}
                     </span>
                   </div>
                   <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
@@ -1490,11 +1506,15 @@ export default function BillsPage() {
                     required
                   >
                     <option value="">Choose customer…</option>
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} {c.total_balance > 0 ? `(Due: ₹${c.total_balance})` : ""}
-                      </option>
-                    ))}
+                    {customers.map((c) => {
+                      const bal = parseFloat(c.total_balance || 0);
+                      const tag = bal < -0.01 ? `(Advance: ₹${Math.abs(bal).toFixed(2)})` : bal > 0.01 ? `(Due: ₹${bal.toFixed(2)})` : "";
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.name} {tag}
+                        </option>
+                      );
+                    })}
                   </Select>
                 </FormField>
 
@@ -1513,7 +1533,17 @@ export default function BillsPage() {
                 const selCust = customers.find((c) => String(c.id) === String(editBillMeta.customer_id));
                 if (!selCust) return null;
                 const totBal = parseFloat(selCust.total_balance || 0);
-                return totBal > 0 ? (
+                return totBal < -0.01 ? (
+                  <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-sm">
+                    <span className="text-emerald-300 font-medium flex items-center gap-2">
+                      <CheckCircle size={18} weight="bold" />
+                      <span>Customer has Advance Balance (जमा राशि):</span>
+                    </span>
+                    <span className="font-mono font-bold text-emerald-400 text-base tabular-nums">
+                      {formatINR(Math.abs(totBal))} (Advance)
+                    </span>
+                  </div>
+                ) : totBal > 0.01 ? (
                   <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-sm">
                     <span className="text-amber-300 font-medium flex items-center gap-2">
                       <WarningCircle size={18} weight="bold" />
@@ -1855,23 +1885,12 @@ export default function BillsPage() {
                       type="number"
                       step="any"
                       min="1"
-                      max={pbTotalDue}
                       value={paymentForm.installment_amount}
                       onChange={(e) => {
                         const val = e.target.value;
-                        if (val === "") {
-                          setPaymentForm({ ...paymentForm, installment_amount: "" });
-                          return;
-                        }
-                        const num = parseFloat(val);
-                        if (!isNaN(num) && num > pbTotalDue) {
-                          toast.error(`Maximum allowed payment is ₹${pbTotalDue.toFixed(2)} (Current + Previous dues). Cannot enter more.`);
-                          setPaymentForm({ ...paymentForm, installment_amount: pbTotalDue.toString() });
-                        } else {
-                          setPaymentForm({ ...paymentForm, installment_amount: val });
-                        }
+                        setPaymentForm({ ...paymentForm, installment_amount: val });
                       }}
-                      placeholder={`Max ${formatINR(pbTotalDue)}`}
+                      placeholder="Enter payment amount"
                       className="w-full min-h-[50px] bg-zinc-950 border border-zinc-700 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl pl-9 pr-4 py-2 text-xl font-mono font-bold text-emerald-400 placeholder:text-zinc-600 tabular-nums transition-all outline-none"
                       required
                     />
@@ -1879,7 +1898,7 @@ export default function BillsPage() {
 
                   {/* Quick Preset Pills */}
                   <div className="flex flex-wrap items-center gap-2 pt-1">
-                    {pbPrevBal > 0 && (
+                    {pbTotalDue > 0 && (
                       <button
                         type="button"
                         onClick={() =>
@@ -1899,23 +1918,25 @@ export default function BillsPage() {
                       </button>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPaymentForm({
-                          ...paymentForm,
-                          installment_amount: pbCurrBal.toString(),
-                        })
-                      }
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5 cursor-pointer ${
-                        Math.abs(enteredInst - pbCurrBal) < 0.01 && pbCurrBal > 0
-                          ? "bg-emerald-500/20 border-emerald-500/60 text-emerald-300 font-semibold shadow-sm"
-                          : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:text-white"
-                      }`}
-                    >
-                      <Receipt size={14} className="text-emerald-400" />
-                      <span>Pay This Bill Only ({formatINR(pbCurrBal)})</span>
-                    </button>
+                    {pbCurrBal > 0 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPaymentForm({
+                            ...paymentForm,
+                            installment_amount: pbCurrBal.toString(),
+                          })
+                        }
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5 cursor-pointer ${
+                          Math.abs(enteredInst - pbCurrBal) < 0.01 && pbCurrBal > 0
+                            ? "bg-emerald-500/20 border-emerald-500/60 text-emerald-300 font-semibold shadow-sm"
+                            : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:text-white"
+                        }`}
+                      >
+                        <Receipt size={14} className="text-emerald-400" />
+                        <span>Pay This Bill Only ({formatINR(pbCurrBal)})</span>
+                      </button>
+                    )}
 
                     {pbCurrBal > 100 && (
                       <button
@@ -1954,6 +1975,15 @@ export default function BillsPage() {
                         <CheckCircle size={15} weight="fill" className="text-emerald-400 shrink-0" />
                         <span>
                           <strong>{formatINR(extraOverThisBill)} extra payment</strong> will automatically deduct from older pending invoices/opening balance!
+                        </span>
+                      </div>
+                    )}
+
+                    {enteredInst > pbTotalDue && (
+                      <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/40 border border-emerald-500/40 p-2.5 rounded-lg font-medium">
+                        <Coins size={15} weight="fill" className="text-emerald-400 shrink-0" />
+                        <span>
+                          <strong>{formatINR(enteredInst - pbTotalDue)} Advance Credit</strong> will be saved to Customer's Advance Balance (जमा राशि) for future bills!
                         </span>
                       </div>
                     )}
@@ -2335,6 +2365,15 @@ export default function BillsPage() {
         isLoading={deleteAllMutation.isPending}
         onConfirm={() => deleteAllMutation.mutate()}
       />
+
+      {/* Customer Payment & Advance Modal */}
+      {customerPaymentModal && (
+        <CustomerPaymentModal
+          isOpen={Boolean(customerPaymentModal)}
+          onClose={() => setCustomerPaymentModal(null)}
+          initialCustomer={customerPaymentModal}
+        />
+      )}
     </div>
   );
 }
