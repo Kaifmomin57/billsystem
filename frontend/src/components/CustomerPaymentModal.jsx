@@ -202,13 +202,12 @@ export function CustomerPaymentModal({ isOpen, onClose, initialCustomer }) {
                   {hasExistingAdvance ? "Advance Credit" : "Total Outstanding"}
                 </span>
                 <span
-                  className={`font-mono font-bold text-xl tabular-nums block ${
-                    hasExistingAdvance
-                      ? "text-emerald-400"
-                      : hasPositiveDues
+                  className={`font-mono font-bold text-xl tabular-nums block ${hasExistingAdvance
+                    ? "text-emerald-400"
+                    : hasPositiveDues
                       ? "text-amber-300"
                       : "text-zinc-400"
-                  }`}
+                    }`}
                 >
                   {hasExistingAdvance ? formatINR(advanceAmount) : formatINR(Math.max(0, totalBal))}
                 </span>
@@ -369,13 +368,12 @@ export function CustomerPaymentModal({ isOpen, onClose, initialCustomer }) {
             <div className="border-t border-zinc-800/80 pt-2 flex items-center justify-between text-zinc-400 font-mono">
               <span>Customer total balance after payment:</span>
               <span
-                className={`font-bold text-sm tabular-nums ${
-                  breakdown.resultingBalance < -0.01
-                    ? "text-emerald-400"
-                    : breakdown.resultingBalance > 0.01
+                className={`font-bold text-sm tabular-nums ${breakdown.resultingBalance < -0.01
+                  ? "text-emerald-400"
+                  : breakdown.resultingBalance > 0.01
                     ? "text-amber-300"
                     : "text-zinc-200"
-                }`}
+                  }`}
               >
                 {breakdown.resultingBalance < -0.01
                   ? `${formatINR(Math.abs(breakdown.resultingBalance))} (Advance)`
@@ -397,11 +395,10 @@ export function CustomerPaymentModal({ isOpen, onClose, initialCustomer }) {
                   key={pm.id}
                   type="button"
                   onClick={() => setPaymentMethod(pm.id)}
-                  className={`min-h-[42px] px-2.5 py-2 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                    isSelected
-                      ? "bg-emerald-950/40 border-emerald-500/60 text-emerald-200 shadow-sm"
-                      : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
-                  }`}
+                  className={`min-h-[42px] px-2.5 py-2 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${isSelected
+                    ? "bg-emerald-950/40 border-emerald-500/60 text-emerald-200 shadow-sm"
+                    : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                    }`}
                 >
                   <Icon size={14} className={isSelected ? "text-emerald-400" : "text-zinc-500"} />
                   <span>{pm.label}</span>
@@ -447,4 +444,5 @@ export function CustomerPaymentModal({ isOpen, onClose, initialCustomer }) {
     </Modal>
   );
 }
+
 

@@ -435,6 +435,7 @@ export default function BillsPage() {
 
     const selCust = customers.find((c) => String(c.id) === String(billMeta.customer_id));
     const prevDue = parseFloat(selCust?.total_balance || 0);
+    const paidAmt = parseFloat(billMeta.amount_paid || 0);
 
     createMutation.mutate({
       customer_id: parseInt(billMeta.customer_id),
@@ -593,6 +594,7 @@ export default function BillsPage() {
 
     const selCust = customers.find((c) => String(c.id) === String(editBillMeta.customer_id));
     const prevDue = parseFloat(editingBill?.previous_balance || selCust?.total_balance || 0);
+    const paidAmt = parseFloat(editBillMeta.amount_paid || 0);
 
     updateBillMutation.mutate({
       billId: editingBill.id,

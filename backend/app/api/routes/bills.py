@@ -432,7 +432,7 @@ def create_manual_bill(
             entity_type="bill",
             entity_id=str(bill.id),
             user_id=current_user.id,
-            changes={"bill_no": bill.bill_no, "total": float(total), "paid": float(paid), "customer_id": data.customer_id},
+            changes={"bill_no": bill.bill_no, "total": float(total), "paid": float(bill.amount_paid or 0), "customer_id": data.customer_id},
             request_id=req_id,
             ip_address=client_ip
         )
